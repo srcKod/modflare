@@ -1,0 +1,91 @@
+name = "telegram-mod-bot"
+main = "src/index.ts"
+compatibility_date = "2024-10-01"
+
+# ---------------------------------------------------------------------------
+# Configuration (non-secret values). Secrets stay in `.dev.vars` locally and
+# in the Cloudflare dashboard / `wrangler secret put` in production.
+# ---------------------------------------------------------------------------
+
+# OpenAI-compatible endpoint, WITHOUT trailing slash. Examples:
+#   https://api.openai.com/v1
+#   https://openrouter.ai/api/v1
+#   https://gateway.ai.cloudflare.com/v1/<ACCOUNT>/<GATEWAY>  (Cloudflare AI Gateway)
+[vars]
+OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
+MODEL_NAME = "google/gemma-4-26b-a4b-it:free" 
+
+# Time-based activation (night hours). IANA timezone.
+TIMEZONE = "Asia/Baghdad"
+START_HOUR = 21
+END_HOUR = 6
+
+# Which messages to send to the LLM. One of:
+#   all          - every message
+#   media        - only messages with photos/videos/animations/documents
+#   links        - only messages containing links
+#   media-links  - only messages with media OR links (recommended; saves tokens)
+PROCESS_MODE = "media-links"
+
+# Optional comma-separated admin usernames (with or without leading @) and/or
+# admin numeric user IDs. When either is set, admin detection is a fast local
+# match and the getChatMember API call is skipped per message. When neither is
+# set, the API call is used instead.
+# Examples:
+#   ADMIN_USERNAMES = "alice, BobManager, @carol"
+#   ADMIN_USER_IDS = "123456789, 987654321"
+# ADMIN_USERNAMES = ""
+# ADMIN_USER_IDS = ""
+
+# Admin panel (audit-log viewer). ADMIN_PANEL_TOKEN (a secret, in .dev.vars /
+# `wrangler secret put`) enables the panel; ADMIN_PANEL_PATH sets the URL
+# prefix (default /admin). The panel is disabled entirely unless the token is
+# set. Login uses a token form -> HMAC-signed HttpOnly cookie (12h TTL).
+ADMIN_PANEL_PATH = "/admin"
+
+# Optional funny reply after a flagged message is deleted. Set to "true" to
+# enable, and choose the language for the reply.
+ENABLE_FUNRESPONSE = "true"
+FUNRESPONSE_LANGUAGE = "Arabic"   # or "Spanish", "French", "German"...
+# Optional dialect of the language above, e.g. "Egyptian", "Gulf",
+# "Levantine" for Arabic. Omitted -> no dialect hint is sent.
+FUNRESPONSE_DIALECT = "Gulf"      # or "Egyptian", "Levantine", "Standard"...
+
+# Optional custom moderation system prompt. Omitted here -> a strict default
+# is used in code (see src/llm-client.ts).
+# MODERATION_PROMPT = "your custom prompt..."
+
+# Optional Telegram webhook secret token to validate request origin.
+# Set WEBHOOK_SECRET_TOKEN as a secret; if provided, the worker validates it.
+
+# ---------------------------------------------------------------------------
+# Audit logging (D1).
+#
+# The bot writes structured audit rows (decisions + LLM responses) to a D1
+# database. Create the database and bind it here, then apply the migration:
+#
+#   npx wrangler d1 create audit_log
+#   npx wrangler d1 migrations apply audit_log
+#
+# LOG_LEVEL: minimum level to persist (debug|info|warn|error). Default info.
+# LOG_RETENTION_DAYS: delete rows older than N days (default 30). The cron
+#   trigger below prunes retired rows on a schedule; rows are also pruned
+#   opportunistically on each write.
+# LOG_ENABLED: master switch. 'false' disables all D1 audit writes entirely
+#   (default is enabled). Handy to cut D1 writes/cost in production.
+LOG_LEVEL = "debug"
+LOG_RETENTION_DAYS = "30"
+LOG_ENABLED = "true"
+
+[[d1_databases]]
+binding = "DB"
+database_id = "<D1-Database-ID>"
+database_name = "audit_log"
+migrations_dir = "migrations"
+
+# daily prune of expired audit rows. NOTE: cron expressions are always UTC.
+# 04:00 UTC = 07:00 Asia/Baghdad (UTC+3) in winter. The prune is timezone-
+# agnostic (it just deletes rows older than LOG_RETENTION_DAYS), so any hour
+# works. Uncomment to enable.
+# [[triggers]]
+# crons = ["0 4 * * *"]

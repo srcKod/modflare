@@ -1,0 +1,17 @@
+# Copy to `.dev.vars` and fill in. Never commit `.dev.vars`.
+#
+# Secrets only. Non-secret behavior config lives in `wrangler.toml` under
+# `[vars]` (TIMEZONE, START_HOUR/END_HOUR, PROCESS_MODE, ADMIN_USERNAMES,
+# ADMIN_USER_IDS, ENABLE_FUNRESPONSE, MODERATION_PROMPT) and is picked up
+# automatically by `wrangler dev`. Only put values here that must stay
+# out of source control.
+BOT_TOKEN=123456:ABC-DEF-ghijklm
+OPENAI_API_KEY=sk-or-v1-your-key-here
+
+# Optional: verify Telegram webhook secret token (must match setWebhook --secret_token)
+# Uncomment and set the same value you pass to `set-webhook`.
+# WEBHOOK_SECRET_TOKEN=your-custom-secret
+
+# Admin panel access token. Enables the /admin audit-log viewer (see
+# ADMIN_PANEL_PATH in wrangler.toml). Keep it strong.
+# ADMIN_PANEL_TOKEN=your-strong-random-token
