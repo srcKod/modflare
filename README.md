@@ -95,7 +95,9 @@ cd modflare
 # 2. Install dependencies
 npm install
 
-# 3. Create your local secrets file and fill it in
+# 3. Create your config files and fill them in
+cp wrangler.toml.example wrangler.toml
+#   → edit wrangler.toml: set your D1 database_id, timezone, hours, etc.
 cp .dev.vars.example .dev.vars
 #   → edit .dev.vars: BOT_TOKEN, OPENAI_API_KEY
 #     (and optionally WEBHOOK_SECRET_TOKEN, ADMIN_PANEL_TOKEN)
