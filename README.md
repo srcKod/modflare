@@ -564,8 +564,12 @@ the expected state was reached, yellow if nothing was found to kill.
   only their caption/file-name text is moderated. Their content is not
   inspected.
 - **Latency**: the delete happens *after* the LLM responds (unless it's a
-  policy-deleted video), so a flagged photo may be visible for a second or two
-  before disappearing.
+  policy-deleted video), so a flagged message may be visible for 1–3 seconds
+  before disappearing. **Best fit:** overnight moderation (admins are asleep,
+  no expectation of instant takedown), community/hobby groups, low-to-medium
+  traffic chats. **Not ideal for:** real-time compliance filtering,
+  high-velocity chats (10+ msg/sec), or scenarios where sub-second removal
+  is required.
 - **Fail-open**: LLM errors, timeouts, and malformed JSON all default to `SAFE`
   (no deletion) to avoid false positives.
 - **Private chats / channels** are ignored; the bot only works in groups and
