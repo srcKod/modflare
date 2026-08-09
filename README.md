@@ -88,21 +88,19 @@ webhook.
 ## Quick start
 
 ```bash
-# 1. Get the code
-git clone <your-repo-url>
-cd telegram-mod-bot
+# 1. Clone the repo
+git clone https://github.com/srcKod/modflare.git
+cd modflare
 
 # 2. Install dependencies
 npm install
 
 # 3. Create your local secrets file and fill it in
 cp .dev.vars.example .dev.vars
-#   → edit .dev.vars: BOT_TOKEN, OPENAI_API_KEY (and optionally
-#     WEBHOOK_SECRET_TOKEN)
+#   → edit .dev.vars: BOT_TOKEN, OPENAI_API_KEY
+#     (and optionally WEBHOOK_SECRET_TOKEN, ADMIN_PANEL_TOKEN)
 
-# 4. Create a bot with @BotFather and put its token in .dev.vars
-
-# 5. Run locally
+# 4. Run locally
 npm run dev
 ```
 
@@ -260,6 +258,10 @@ SELECT * FROM audit_log WHERE level = 'error' ORDER BY ts DESC LIMIT 50;
 This section walks through a full first-time deploy to real Cloudflare
 Workers. After the first time, the only step you repeat is
 `npm run deploy` (and `set-webhook.mjs` if your worker URL changed).
+
+> **ℹ️ GitHub is not part of deployment.** `wrangler deploy` uploads your
+> built Worker directly from your machine to Cloudflare — the repo can be
+> private, public, or not exist at all. GitHub is for version control only.
 
 ### 1. Authenticate with Cloudflare
 
