@@ -28,4 +28,4 @@ powershell -NoProfile -Command ^
   "if ($tunnel) { Write-Host '  tunnel: STILL RUNNING' -ForegroundColor Red } else { Write-Host '  tunnel: gone' -ForegroundColor Green };" ^
   "$dev = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'wrangler' -and $_.CommandLine -match '\bdev\b' -and $_.CommandLine -notmatch '\btunnel\b' };" ^
   "$workers = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'workerd.exe' };" ^
-  "if ($dev -or $workers) { Write-Host ('  dev PIDs: ' + (($dev | ForEach-Object { $_.ProcessId }) -join ', ') + '; workerd PIDs: ' + (($workers | ForEach-Object { $_.ProcessId }) -join ', ') + ' (kept alive)') -ForegroundColor Green } else { Write-Host '  dev: not running' -ForegroundColor Yellow }"
+  "if ($dev -or $workers) { $dpids = ($dev | ForEach-Object { $_.ProcessId }) -join ', '; $wpids = ($workers | ForEach-Object { $_.ProcessId }) -join ', '; Write-Host (\"  dev PIDs: $dpids; workerd PIDs: $wpids (kept alive)\") -ForegroundColor Green } else { Write-Host '  dev: not running' -ForegroundColor Yellow }"

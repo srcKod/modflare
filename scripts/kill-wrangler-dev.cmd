@@ -28,14 +28,14 @@ echo.
 echo === verifying state (pass 1) ===
 powershell -NoProfile -Command ^
   "$listen = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue;" ^
-  "if ($listen) { Write-Host ('  port 8787: STILL LISTENING (PID '+$listen.OwningProcess+')' -ForegroundColor Red); exit 1 } else { Write-Host '  port 8787: free' -ForegroundColor Green; exit 0 };"
+  "if ($listen) { $msg = \"  port 8787: STILL LISTENING (PID $($listen.OwningProcess))\"; Write-Host $msg -ForegroundColor Red; exit 1 } else { Write-Host '  port 8787: free' -ForegroundColor Green; exit 0 }"
 if %ERRORLEVEL% NEQ 0 (
   echo.
   echo === orphaned port owner — attempt 2nd pass kill ===
   powershell -NoProfile -Command ^
     "$listen = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue;" ^
     "if ($listen) {" ^
-    "  Write-Host ('  force-killing PID '+$listen.OwningProcess);" ^
+    "  $msg = \"  force-killing PID $($listen.OwningProcess)\"; Write-Host $msg;" ^
     "  Stop-Process -Id $listen.OwningProcess -Force -ErrorAction SilentlyContinue;" ^
     "  Start-Sleep -Seconds 2;" ^
     "  $recheck = Get-NetTCPConnection -LocalPort 8787 -State Listen -ErrorAction SilentlyContinue;" ^
@@ -46,4 +46,4 @@ echo.
 echo === tunnel state ===
 powershell -NoProfile -Command ^
   "$tunnel = Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'wrangler' -and $_.CommandLine -match '\btunnel\b' };" ^
-  "if ($tunnel) { Write-Host ('  tunnel PIDs: ' + (($tunnel | ForEach-Object { $_.ProcessId }) -join ', ') + ' (kept alive)') -ForegroundColor Green } else { Write-Host '  tunnel: not running' -ForegroundColor Yellow }"
+  "if ($tunnel) { $pids = ($tunnel | ForEach-Object { $_.ProcessId }) -join ', '; Write-Host (\"  tunnel PIDs: $pids (kept alive)\") -ForegroundColor Green } else { Write-Host '  tunnel: not running' -ForegroundColor Yellow }"
