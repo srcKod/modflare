@@ -158,7 +158,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
 
   // Activation gate.
   if (!isActivePeriod(env)) {
-    logger.debug('inactive_period', { ...ctx });
+    await logger.debug('inactive_period', { ...ctx });
     return;
   }
 
@@ -173,7 +173,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
     if (msg.from) {
       const admin = await isAdminUser(env, msg);
       if (admin) {
-        logger.info('admin_exempt', { ...ctx });
+        await logger.info('admin_exempt', { ...ctx });
         return;
       }
     }
@@ -183,7 +183,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
     // image path). This avoids wasted LLM calls and unmoderated video.
     if (isPolicyVideo(msg)) {
       const deleted = await deleteMessage(env, msg.chat.id, msg.message_id);
-      logger.info('video_deleted', {
+      await logger.info('video_deleted', {
         ...ctx,
         decision: 'delete',
         reason: 'policy_video',
@@ -196,7 +196,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
     // signal (media / links / both / all). Saves LLM tokens on plain text.
     // (Videos already handled above, so 'media' here = photo/GIF/document.)
     if (!shouldProcess(env, msg)) {
-      logger.debug('skipped_process_mode', {
+      await logger.debug('skipped_process_mode', {
         ...ctx,
         reason: 'process_mode_filter',
       });
@@ -207,11 +207,11 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
 
     // If we have no text and no resolvable media, nothing to analyze.
     if (!text && media.length === 0) {
-      logger.debug('skipped_empty', { ...ctx });
+      await logger.debug('skipped_empty', { ...ctx });
       return;
     }
 
-    logger.debug('moderating', {
+    await logger.debug('moderating', {
       ...ctx,
       textLen: text.length,
       mediaCount: media.length,
@@ -237,7 +237,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
       }
 
       const deleted = await deleteMessage(env, msg.chat.id, msg.message_id);
-      logger.warn('flagged_deleted', {
+      await logger.warn('flagged_deleted', {
         ...ctx,
         decision: 'delete',
         reason: result.reason,
@@ -255,7 +255,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
         await sendMessage(env, msg.chat.id, funText, undefined, funParseMode);
       }
     } else {
-      logger.info('safe', {
+      await logger.info('safe', {
         ...ctx,
         decision: 'keep',
         reason: result.reason,
@@ -265,7 +265,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
     }
   } catch (err) {
     // Fail-open: never let an internal error cause a spurious deletion.
-    logger.error('moderation_error', {
+    await logger.error('moderation_error', {
       ...ctx,
       reason: String(err),
     });
