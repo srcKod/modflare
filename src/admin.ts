@@ -93,7 +93,7 @@ async function handleAuth(
       status: 303,
       headers: {
         Location: adminPath(env),
-        'Set-Cookie': `${COOKIE_NAME}=; Path=${adminPath(env)}; Max-Age=0; HttpOnly; SameSite=Strict`,
+        'Set-Cookie': `${COOKIE_NAME}=; Path=${adminPath(env)}; Max-Age=0; HttpOnly; SameSite=Strict; Secure`,
       },
     });
   }
