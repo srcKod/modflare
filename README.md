@@ -87,28 +87,38 @@ webhook.
 
 ## Quick start
 
+**1. Get the code**
+
 ```bash
-# 1. Clone the repo
 git clone https://github.com/srcKod/modflare.git
 cd modflare
-
-# 2. Install dependencies
 npm install
+```
 
-# 3. Create your config files and fill them in
+**2. Configure**
+
+```bash
 cp wrangler.toml.example wrangler.toml
-#   → edit wrangler.toml: set your D1 database_id, timezone, hours, etc.
 cp .dev.vars.example .dev.vars
-#   → edit .dev.vars: BOT_TOKEN, OPENAI_API_KEY
-#     (and optionally WEBHOOK_SECRET_TOKEN, ADMIN_PANEL_TOKEN)
+```
 
-# 4. Run locally
+Edit `wrangler.toml` — set at minimum:
+- `database_id` in `[[d1_databases]]` (create a D1 database first, see [Deployment](#deployment))
+- `TIMEZONE`, `START_HOUR`, `END_HOUR`
+- `OPENAI_BASE_URL` and `MODEL_NAME`
+
+Edit `.dev.vars` — add your secrets:
+- `BOT_TOKEN` (from [@BotFather](https://t.me/BotFather))
+- `OPENAI_API_KEY`
+
+**3. Run locally**
+
+```bash
 npm run dev
 ```
 
-For local testing you can expose `wrangler dev` with `ngrok` or `cloudflared`
-and point the webhook at that URL temporarily (see
-[Local development](#local-development)).
+Worker starts at `http://127.0.0.1:8787`. To receive real Telegram updates,
+expose it with a tunnel and set the webhook (see [Local development](#local-development)).
 
 ---
 
@@ -224,9 +234,9 @@ To enable it, create a D1 database, bind it in `wrangler.toml`, and apply the
 migration:
 
 ```bash
-npx wrangler d1 create audit_log
+npx wrangler d1 create telegram-mod-bot-db
 # copy the printed database_id into wrangler.toml [[d1_databases]]
-npx wrangler d1 migrations apply audit_log --remote
+npx wrangler d1 migrations apply telegram-mod-bot-db --remote
 ```
 
 > **Why D1 and not a file?** Cloudflare Workers have no persistent local
@@ -257,13 +267,8 @@ SELECT * FROM audit_log WHERE level = 'error' ORDER BY ts DESC LIMIT 50;
 
 ## Deployment
 
-This section walks through a full first-time deploy to real Cloudflare
-Workers. After the first time, the only step you repeat is
-`npm run deploy` (and `set-webhook.mjs` if your worker URL changed).
-
-> **ℹ️ GitHub is not part of deployment.** `wrangler deploy` uploads your
-> built Worker directly from your machine to Cloudflare — the repo can be
-> private, public, or not exist at all. GitHub is for version control only.
+First-time deploy end-to-end. After this, you only repeat steps 5–6
+(`npm run deploy` + re-register webhook if the URL changed).
 
 ### 1. Authenticate with Cloudflare
 
@@ -277,7 +282,7 @@ have `wrangler` globally, `npx` will fetch it on first use.)
 ### 2. Create the D1 database (first time only)
 
 ```bash
-npx wrangler d1 create audit_log
+npx wrangler d1 create telegram-mod-bot-db
 ```
 
 `wrangler` prints a `database_id`. Paste it into `wrangler.toml`
@@ -288,7 +293,7 @@ the first few GB of storage + reads.
 ### 3. Apply migrations to the remote DB
 
 ```bash
-npx wrangler d1 migrations apply audit_log --remote
+npx wrangler d1 migrations apply telegram-mod-bot-db --remote
 ```
 
 This runs every file in `migrations/` (in lexical order) against the remote
@@ -411,115 +416,91 @@ cannot remove them.
 
 ## Local development
 
-### First-time setup
+### 1. Install and configure
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars   # fill in BOT_TOKEN, OPENAI_API_KEY
+cp .dev.vars.example .dev.vars
 ```
 
-For real Telegram webhook testing, also set `WEBHOOK_SECRET_TOKEN` to a random
-string. To use the admin panel locally, also set `ADMIN_PANEL_TOKEN`. See
-`.dev.vars.example` for the layout — secrets only; non-secret config lives in
-`wrangler.toml [vars]`.
+Edit `.dev.vars` with your secrets:
+- `BOT_TOKEN` — Telegram bot token
+- `OPENAI_API_KEY` — LLM provider key
+- `WEBHOOK_SECRET_TOKEN` — (optional) for live webhook testing
+- `ADMIN_PANEL_TOKEN` — (optional) to use the admin panel locally
 
-Apply the D1 migrations to your **local** D1 once (and any time you add a
-new migration file):
+**Non-secret** config (`TIMEZONE`, `START_HOUR`, `MODEL_NAME`, etc.) goes in
+`wrangler.toml [vars]`, not `.dev.vars`.
+
+### 2. Create the local D1 database
 
 ```bash
-npx wrangler d1 migrations apply audit_log --local
+npx wrangler d1 create telegram-mod-bot-db
 ```
 
-### Start the worker
+Put the printed `database_id` into `wrangler.toml` under `[[d1_databases]]`.
+Then apply migrations to the local D1 store:
 
 ```bash
-npm run dev      # = npx wrangler dev
+npx wrangler d1 migrations apply telegram-mod-bot-db --local
 ```
 
-Wrangler boots a local server on `http://127.0.0.1:8787`, applies migrations
-to a local SQLite-backed D1 (`.wrangler/state/v3/d1/`), and **hot-reloads** on
-every save. Useful endpoints while it's running:
+Re-run the `migrations apply` step whenever you add a new migration file;
+already-applied migrations are skipped.
 
-- `http://127.0.0.1:8787/admin` — admin panel (if `ADMIN_PANEL_TOKEN` set)
-- `http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/d1/database` —
-  D1 inspector
+### 3. Start the dev server
+
+```bash
+npm run dev
+```
+
+Wrangler starts on `http://127.0.0.1:8787` with a local SQLite-backed D1
+(`.wrangler/state/v3/d1/`) and hot-reloads on every save.
+
+**Useful while running:**
+- `http://127.0.0.1:8787/admin` — admin panel (requires `ADMIN_PANEL_TOKEN`)
 - `wrangler tail` (in another terminal) — live request logs
+- D1 inspector: browse to `http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/d1/database`
 
-If you only want to test the LLM / admin code paths without Telegram, you can
-`curl` the worker directly — no tunnel needed.
+### 4. Test with live Telegram updates
 
-### Test with real Telegram updates
-
-The Telegram webhook must point at a **publicly reachable HTTPS URL**, but
-`wrangler dev` only listens on localhost. You need a tunnel. Any of these work:
+Telegram webhooks require a public HTTPS URL. Expose your dev server with a
+tunnel:
 
 ```bash
-# Option A: Cloudflare's quick tunnel (no account needed; random *.trycloudflare.com)
 npx wrangler tunnel quick-start http://127.0.0.1:8787
-
-# Option B: standalone cloudflared
-npx cloudflared tunnel --url http://localhost:8787
-
-# Option C: ngrok
-ngrok http 8787
 ```
 
-The tunnel prints a public URL — point Telegram at it:
+The tunnel prints a public `*.trycloudflare.com` URL. Register it with
+Telegram:
 
 ```bash
 node scripts/set-webhook.mjs <BOT_TOKEN> https://<tunnel-url> [SECRET_TOKEN]
 ```
 
-> **Note:** `wrangler tunnel quick-start` URLs change every time you start
-> it. Re-run `set-webhook.mjs` each time the URL rotates. For a stable URL,
-> create a named tunnel: `cloudflared tunnel create my-bot` + a DNS route in
-> the Cloudflare dashboard.
-
-### Local admin panel
-
-With `ADMIN_PANEL_TOKEN` set in `.dev.vars`, open
-`http://127.0.0.1:8787/admin` and log in with the token. The panel returns
-an HttpOnly signed cookie (12h TTL) on success.
-
-> **Note for `wrangler dev` on Windows:** hot-reloads can leave stale
-> `workerd.exe` processes around, which may briefly serve cached code or
-> skip the admin auth check after a token change. The kill scripts below
-> give a clean restart.
+> This URL changes every time you restart the tunnel — re-run the command
+> above each time. For a stable URL, create a named Cloudflare Tunnel.
 
 ### npm scripts
 
-| Script | Command | Purpose |
-| :--- | :--- | :--- |
-| `npm run dev` | `wrangler dev` | Start the local worker on :8787 |
-| `npm run typecheck` | `tsc --noEmit` | Type-check without emitting |
-| `npm run deploy` | `wrangler deploy` | Deploy to Cloudflare |
-| `npm run set-webhook` | `node scripts/set-webhook.mjs` | Register the Telegram webhook |
+| Script | What it does |
+| :--- | :--- |
+| `npm run dev` | Start local worker on `http://127.0.0.1:8787` |
+| `npm run typecheck` | Type-check (`tsc --noEmit`) |
+| `npm run deploy` | Deploy to Cloudflare Workers |
+| `npm run set-webhook` | Register the Telegram webhook |
 
-### Stopping the dev server
+### Clean restart (Windows)
 
-On Windows, `wrangler dev` can leave stale `workerd.exe` processes around on
-hot-reload, which occasionally serve cached code. Two helper scripts in
-`scripts/` clean up by **process tree** without touching the other half:
-
-| Script | What it kills | What it keeps |
-| :--- | :--- | :--- |
-| `scripts/kill-wrangler-dev.cmd` | `npx wrangler dev` + `wrangler.js dev` + `wrangler-dist/cli.js dev` + all `workerd.exe` | The `wrangler tunnel` tree |
-| `scripts/kill-wrangler-tunnel.cmd` | `npx wrangler tunnel quick-start` + `wrangler.js tunnel` + `wrangler-dist/cli.js tunnel` | The `wrangler dev` tree + all `workerd.exe` |
-
-Run from Git Bash or Windows cmd:
+`wrangler dev` hot-reloads can leave stale `workerd.exe` processes that serve
+cached code. Kill them cleanly:
 
 ```bash
-./scripts/kill-wrangler-dev.cmd     # leaves the tunnel running
-./scripts/kill-wrangler-tunnel.cmd  # only when you want to stop the public URL
+./scripts/kill-wrangler-dev.cmd     # kills the dev worker, leaves tunnel alive
+./scripts/kill-wrangler-tunnel.cmd  # kills the tunnel (rotates the URL!)
 ```
 
-Each script is idempotent (no error if nothing matches), lists every PID it's
-about to kill, and prints a coloured summary: red if a kill failed, green if
-the expected state was reached, yellow if nothing was found to kill.
-
-> **Heads up on the tunnel script:** killing the tunnel rotates your
-> `*.trycloudflare.com` URL. The next `wrangler tunnel quick-start` gives a
-> new one, and you'll need to re-register the webhook with `set-webhook.mjs`.
+Both scripts are idempotent and show what they're killing before they do it.
 
 ---
 
@@ -597,9 +578,9 @@ console output with `wrangler tail` or in the dashboard.
 
 **No audit rows appear?**
 The D1 database isn't bound or the migration hasn't been applied. Create it
-(`npx wrangler d1 create audit_log`), add the `database_id` to `wrangler.toml`
+(`npx wrangler d1 create telegram-mod-bot-db`), add the `database_id` to `wrangler.toml`
 [`[[d1_databases]]`], and run
-`npx wrangler d1 migrations apply audit_log --remote`.
+`npx wrangler d1 migrations apply telegram-mod-bot-db --remote`.
 
 **Messages pass through unflagged with `reason: unparseable` or `llm_error:NNN`?**
 The LLM endpoint returned empty or an error — the parser is doing the right
