@@ -80,7 +80,7 @@ LOG_ENABLED = "true"
 [[d1_databases]]
 binding = "DB"
 database_id = "<D1-Database-ID>"
-database_name = "audit_log"
+database_name = "telegram-mod-bot-db"
 migrations_dir = "migrations"
 
 # daily prune of expired audit rows. NOTE: cron expressions are always UTC.
