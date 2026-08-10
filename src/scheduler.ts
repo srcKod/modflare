@@ -60,6 +60,7 @@ export function shouldProcess(
  * True only when the current hour (in the configured IANA timezone) falls
  * inside the active window [START_HOUR, END_HOUR). Handles cross-midnight
  * ranges (e.g. START=22, END=6 is active from 22:00 to 06:00).
+ * Setting START_HOUR = END_HOUR enables 24-hour moderation.
  */
 export function isActivePeriod(env: Env, now: Date = new Date()): boolean {
   const start = env.START_HOUR;
@@ -85,8 +86,8 @@ export function isActivePeriod(env: Env, now: Date = new Date()): boolean {
 /** Range check with cross-midnight support. */
 function isHourInRange(hour: number, start: number, end: number): boolean {
   if (start === end) {
-    // A zero-length window matches nothing (or everything? -> nothing, safer).
-    return false;
+    // Same start and end = full 24-hour window.
+    return true;
   }
   if (start < end) {
     return hour >= start && hour < end;

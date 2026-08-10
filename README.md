@@ -167,8 +167,9 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 
 **Active window (`START_HOUR` / `END_HOUR` / `TIMEZONE`)**
 The bot only moderates during this window. Cross-midnight ranges are supported
-(`START=22`, `END=6` = active 22:00→06:00). Outside the window every message
-passes untouched.
+(`START=22`, `END=6` = active 22:00→06:00). **For 24-hour moderation, set
+both to the same value** (e.g. `START=0`, `END=0`). Outside the window every
+message passes untouched.
 
 **`PROCESS_MODE`**
 Controls which messages reach the LLM, to save tokens during busy periods:
