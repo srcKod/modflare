@@ -55,8 +55,11 @@ export async function handleAdmin(
 
   const rest = url.pathname.slice(base.length) || '/';
 
-  // Public-ish endpoints (login) have their own auth handling.
-  if (request.method === 'POST' && (rest === '/login' || rest === '/logout')) {
+  // Public-ish endpoints (login/logout) have their own auth handling.
+  if (
+    (request.method === 'POST' && (rest === '/login' || rest === '/logout')) ||
+    (request.method === 'GET' && rest === '/logout')
+  ) {
     return handleAuth(request, env, rest);
   }
 
