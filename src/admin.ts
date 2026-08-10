@@ -835,10 +835,13 @@ async function loadStats(){
   const total=(s.by_level||[]).reduce((a,x)=>a+(x.c||0),0);
   const deletes=(s.by_event||[]).filter(x=>['flagged_deleted','video_deleted'].includes(x.event))
     .reduce((a,x)=>a+(x.c||0),0);
+  const kept=(s.by_event||[]).filter(x=>x.event==='safe')
+    .reduce((a,x)=>a+(x.c||0),0);
   const errors=(s.by_level||[]).filter(x=>x.level==='error').reduce((a,x)=>a+(x.c||0),0);
   document.getElementById('stats').innerHTML=
     '<div class="stat"><div class="num">'+total+'</div><div class="lbl">Total (filtered)</div></div>'+
     '<div class="stat"><div class="num">'+deletes+'</div><div class="lbl">Deletions</div></div>'+
+    '<div class="stat"><div class="num">'+kept+'</div><div class="lbl">Kept</div></div>'+
     '<div class="stat"><div class="num">'+errors+'</div><div class="lbl">Errors</div></div>';
 }
 async function loadEvents(){
