@@ -9,7 +9,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "set-webhook": "node scripts/set-webhook.mjs"
+    "set-webhook": "node scripts/set-webhook.mjs",
+    "rotate-token": "node scripts/rotate-token.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260809.1",

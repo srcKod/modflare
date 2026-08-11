@@ -22,9 +22,43 @@ function hasMedia(
   );
 }
 
-/** True if the message text/caption contains a URL (http/https). */
+/** Explicit scheme URLs: http://, https://, tg://, ftp://, … */
+const SCHEME_URL_RE = /[a-z][a-z0-9+.-]*:\/\/\S+/i;
+
+/** `www.` shorthand, scheme-less: www.example.com, www.example.com/path */
+const WWW_URL_RE = /www\.[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*(?::\d+)?(?:\/[^\s]*)?/iu;
+
+/**
+ * Common filename extensions that look like bare domains (report.pdf,
+ * photo.jpg, app.js, …) — excluded so plain text with file names is not
+ * mistaken for a link.
+ */
+const FILE_EXTENSIONS =
+  '(?:txt|md|jpg|jpeg|png|gif|svg|webp|bmp|ico|pdf|doc|docx|xls|xlsx|ppt|pptx|odt|ods|zip|rar|7z|tar|gz|bz2|mp3|mp4|avi|mkv|mov|wav|flac|ogg|exe|apk|ipa|dmg|iso|css|js|mjs|ts|jsx|tsx|json|xml|csv|html|htm|py|sh|bat|cmd|ps1|log|ini|cfg|conf|yaml|yml|tmp|bak|swp|lock)';
+
+/**
+ * Bare domain ending in an ASCII letter TLD (2+ chars): example.com,
+ * t.me/joinchat/…, sub.example.co.uk/path, contact@example.com.
+ * Leading boundary includes whitespace/punctuation/@ (so emails match and
+ * Arabic text adjacent to the domain still counts); trailing boundary keeps
+ * sentence punctuation out of the match.
+ */
+const BARE_DOMAIN_RE = new RegExp(
+  `(?:^|[\\s([{<'"@])[\\p{L}\\p{N}_-]+(?:\\.[\\p{L}\\p{N}_-]+)*\\.(?!${FILE_EXTENSIONS}\\b)([a-z]{2,63})(?::\\d+)?(?:\\/[^\\s]*)?(?:$|[\\s)\\]}>'".,;!?])`,
+  'iu',
+);
+
+/**
+ * True if the message text/caption contains a URL-like token: an explicit
+ * scheme (http/https/tg/…), a `www.` domain, or a bare domain with a letter
+ * TLD. Scheme-less domains (the common `www.X.com` / `X.com` spam shape)
+ * are caught, while file names and version strings are not.
+ */
 function hasLink(text: string): boolean {
-  return /https?:\/\/\S+/i.test(text);
+  if (!text) return false;
+  if (SCHEME_URL_RE.test(text)) return true;
+  if (WWW_URL_RE.test(text)) return true;
+  return BARE_DOMAIN_RE.test(text);
 }
 
 /**

@@ -68,6 +68,8 @@ export interface Env {
   LLM_MAX_TOKENS?: string;
   /** Optional structured output: set `json` to send response_format json_object (model-dependent). */
   LLM_RESPONSE_FORMAT?: string;
+  /** Optional arbitrary JSON object merged into the LLM request body (provider/model-specific params). */
+  LLM_EXTRA_BODY_JSON?: string;
   /** Optional max media download bytes. Defaults to 20MB. */
   MAX_MEDIA_BYTES?: string;
 
@@ -194,6 +196,9 @@ export interface JsonModerationReply {
 export interface MediaPart {
   kind: 'photo' | 'video' | 'document' | 'animation';
   file_id: string;
-  url: string;
+  /** base64 data URL (data:image/...;base64,...) — never a public URL,
+   * so the bot token is not leaked to the LLM provider and Workers AI's
+   * multimodal URL-domain allowlist is not hit. */
+  dataUrl: string;
   mimeType?: string;
 }

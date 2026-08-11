@@ -19,6 +19,19 @@ MODEL_NAME = "google/gemma-4-26b-a4b-it:free"
 # LLM_TIMEOUT_MS = "60000"          # LLM request timeout, ms
 # LLM_MAX_TOKENS = "2048"           # cap on LLM output tokens
 # LLM_RESPONSE_FORMAT = "json"      # strict JSON output, model-dependent
+#
+# Generic provider/model escape hatch: arbitrary JSON merged into the LLM
+# request body. Set the correct thinking-toggle param for YOUR model here:
+#   GLM or Gemma on CF Workers AI -> {"chat_template_kwargs":{"enable_thinking":false}}
+#   Qwen3     -> {"enable_thinking":false}
+#   OpenAI    -> {"reasoning_effort":"none"}
+#
+# Verified 2026-08-11 on CF Workers AI: glm-4.7-flash AND gemma-4-26b-a4b-it
+# ignore {"thinking":{"type":"disabled"}} but honor
+# chat_template_kwargs.enable_thinking:false. With thinking ON and a tight
+# max_tokens cap, reasoning can consume the whole budget -> empty content ->
+# unparseable (fail-open). Disabling thinking is ~4x faster / ~7x fewer tokens.
+# LLM_EXTRA_BODY_JSON = "{\"chat_template_kwargs\":{\"enable_thinking\":false}}"
 
 # Time-based activation (night hours). IANA timezone.
 TIMEZONE = "Asia/Baghdad"

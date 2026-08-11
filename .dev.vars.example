@@ -15,3 +15,7 @@ OPENAI_API_KEY=sk-or-v1-your-key-here
 # Admin panel access token. Enables the /admin audit-log viewer (see
 # ADMIN_PANEL_PATH in wrangler.toml). Keep it strong.
 # ADMIN_PANEL_TOKEN=your-strong-random-token
+
+# Optional: worker URL used by `npm run rotate-token` when no URL argument is
+# passed (defaults to https://telegram-mod-bot.livenet123.workers.dev).
+# WORKER_URL=https://telegram-mod-bot.<your-subdomain>.workers.dev

@@ -75,9 +75,10 @@ export async function moderateContent(
   }
 
   // Only photo / GIF / image-document parts reach the LLM (videos are removed
-  // by policy before this). All can be sent as image_url.
+  // by policy before this). All are pre-downloaded as base64 data URLs so the
+  // model never sees a public URL (no token leak, no URL-domain allowlist).
   for (const part of media) {
-    content.push({ type: 'image_url', image_url: { url: part.url } });
+    content.push({ type: 'image_url', image_url: { url: part.dataUrl } });
   }
 
   const body: Record<string, unknown> = {
@@ -97,6 +98,25 @@ export async function moderateContent(
   // to "json" only when the configured model supports strict JSON output.
   if (env.LLM_RESPONSE_FORMAT === 'json') {
     body.response_format = { type: 'json_object' };
+  }
+
+  // Generic provider/model escape hatch: merge arbitrary JSON into the request
+  // body. Lets you send the correct thinking-toggle param for whatever model is
+  // configured (e.g. {"thinking":{"type":"disabled"}} for Z.ai GLM,
+  // {"enable_thinking":false} for Qwen3, {"reasoning_effort":"none"} for
+  // OpenAI) without hardcoding provider-specific code. Invalid JSON is logged
+  // and ignored so moderation never breaks on a misconfigured var.
+  if (env.LLM_EXTRA_BODY_JSON?.trim()) {
+    try {
+      const extra = JSON.parse(env.LLM_EXTRA_BODY_JSON);
+      if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+        Object.assign(body, extra);
+      } else {
+        console.error('LLM_EXTRA_BODY_JSON must be a JSON object; ignoring');
+      }
+    } catch (err) {
+      console.error(`LLM_EXTRA_BODY_JSON invalid JSON: ${String(err)}`);
+    }
   }
 
   const endpoint = `${env.OPENAI_BASE_URL.replace(/\/+$/, '')}/chat/completions`;

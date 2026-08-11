@@ -23,15 +23,80 @@ async function callTelegram(
   return json;
 }
 
-/** Resolve a Telegram file_id to a short-lived public download URL. */
-export async function getFileUrl(
+/** Resolve a Telegram file_id to its file_path (null if unresolvable). */
+async function getFilePath(
   env: Env,
   fileId: string,
 ): Promise<string | null> {
   const json = await callTelegram(env, 'getFile', { file_id: fileId });
   const path = (json.result as { file_path?: string } | undefined)?.file_path;
   if (!json.ok || !path) return null;
-  return `${TELEGRAM_API}/file/bot${env.BOT_TOKEN}/${path}`;
+  return path;
+}
+
+/** Guess a MIME type from a file path suffix (defaults to JPEG). */
+function mimeFromPath(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'bmp':
+      return 'image/bmp';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'jpeg':
+    case 'jpg':
+    default:
+      return 'image/jpeg';
+  }
+}
+
+/**
+ * Download a Telegram file and return it as a base64 data URL, so the LLM
+ * sees the image bytes without ever receiving a public URL (which would
+ * (a) leak the bot token to the provider and (b) be rejected by Workers AI's
+ * multimodal URL-domain allowlist, which is empty by default).
+ * Returns null when the file cannot be downloaded or is too large.
+ */
+export async function getFileDataUrl(
+  env: Env,
+  fileId: string,
+  mimeHint?: string,
+): Promise<string | null> {
+  const path = await getFilePath(env, fileId);
+  if (!path) return null;
+
+  const url = `${TELEGRAM_API}/file/bot${env.BOT_TOKEN}/${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+
+  // Telegram photos are small (tens of KB), but guard against pathological
+  // uploads blowing up the LLM request body.
+  const MAX_BYTES = 5 * 1024 * 1024;
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return null;
+
+  const mime =
+    mimeHint && mimeHint.startsWith('image/') ? mimeHint : mimeFromPath(path);
+
+  // Workers has no Buffer; chunked String.fromCharCode avoids stack overflow
+  // on larger images.
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${mime};base64,${btoa(bin)}`;
 }
 
 /** Delete a message from a chat. Returns true on success. */
@@ -207,8 +272,8 @@ export async function extractMedia(
   if (msg.photo && msg.photo.length > 0) {
     // Largest photo is the last element.
     const largest = msg.photo[msg.photo.length - 1];
-    const url = await getFileUrl(env, largest.file_id);
-    if (url) media.push({ kind: 'photo', file_id: largest.file_id, url });
+    const dataUrl = await getFileDataUrl(env, largest.file_id);
+    if (dataUrl) media.push({ kind: 'photo', file_id: largest.file_id, dataUrl });
   }
 
   // NOTE: product-hosted videos are handled by the delete-video policy in
@@ -216,12 +281,12 @@ export async function extractMedia(
   // here. Only photos and GIFs (animations) are sent to the model as images.
 
   if (msg.animation) {
-    const url = await getFileUrl(env, msg.animation.file_id);
-    if (url)
+    const dataUrl = await getFileDataUrl(env, msg.animation.file_id, msg.animation.mime_type);
+    if (dataUrl)
       media.push({
         kind: 'animation',
         file_id: msg.animation.file_id,
-        url,
+        dataUrl,
         mimeType: msg.animation.mime_type,
       });
   }
@@ -231,12 +296,12 @@ export async function extractMedia(
   // reach the LLM; other non-image documents (pdf, zip, …) are left for the
   // text-based moderation of the caption/name rather than sent as media.
   if (msg.document && msg.document.mime_type?.startsWith('image/')) {
-    const url = await getFileUrl(env, msg.document.file_id);
-    if (url)
+    const dataUrl = await getFileDataUrl(env, msg.document.file_id, msg.document.mime_type);
+    if (dataUrl)
       media.push({
         kind: 'document',
         file_id: msg.document.file_id,
-        url,
+        dataUrl,
         mimeType: msg.document.mime_type,
       });
   }

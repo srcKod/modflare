@@ -155,6 +155,7 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `LLM_TIMEOUT_MS` | LLM request timeout in milliseconds | `60000` |
 | `LLM_MAX_TOKENS` | Cap on LLM output tokens. Bounds slow/reasoning-heavy models | `2048` |
 | `LLM_RESPONSE_FORMAT` | Opt-in strict JSON output: set `json` to send `response_format` (model-dependent; some endpoints 400) | *none* |
+| `LLM_EXTRA_BODY_JSON` | Arbitrary JSON object merged into the LLM request body (provider/model-specific params, e.g. disabling thinking) | *none* |
 | `LOG_LEVEL` | Minimum level to persist to the audit log: `debug` / `info` / `warn` / `error` | `info` |
 | `LOG_RETENTION_DAYS` | Delete audit rows older than this many days | `30` |
 | `LOG_ENABLED` | Master switch for the audit logger (`false` disables all D1 writes) | `true` |
@@ -172,6 +173,20 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 >   out before producing a decision. Avoid reasoning/thinking models here.
 > - **Multimodal (optional)** — only needed to moderate photos/videos; for
 >   text+links a plain text model is enough.
+>
+> **Disabling thinking on reasoning models.** Many Workers AI models (GLM,
+> Gemma) run a chain-of-thought phase by default that eats latency and output
+> tokens — and with a tight `LLM_MAX_TOKENS` it can consume the whole budget,
+> producing empty `content` (unparseable, fail-open). Set
+> `LLM_EXTRA_BODY_JSON` to the param your provider expects — e.g. GLM or
+> Gemma on Cloudflare Workers AI:
+> `{"chat_template_kwargs":{"enable_thinking":false}}`, Qwen3:
+> `{"enable_thinking":false}`, OpenAI: `{"reasoning_effort":"none"}`.
+> The value is merged verbatim into the request body; check your provider's
+> docs for the exact param. Verified 2026-08-11 on CF Workers AI: GLM and
+> Gemma ignore `{"thinking":{"type":"disabled"}}` but honor
+> `chat_template_kwargs.enable_thinking:false` (thinking fully off, ~4×
+> faster, ~7× fewer tokens).
 >
 > Works well: `google/gemma-4-26b-a4b-it` (OpenRouter) or, via Cloudflare AI
 > Gateway (set `OPENAI_BASE_URL =
@@ -193,8 +208,13 @@ Controls which messages reach the LLM, to save tokens during busy periods:
 | :--- | :--- |
 | `all` | every message |
 | `media` | only messages with a photo / animation / image-document |
-| `links` | only messages whose text/caption contains a URL |
+| `links` | only messages whose text/caption contains a URL (incl. scheme-less `www.X.com` / `X.com` / `t.me/…`) |
 | `media-links` **(default)** | messages with media **or** links |
+
+> Link detection is deliberately broad to avoid letting spam slip through: it
+> matches `http(s)://`, `www.` domains, bare domains with a letter TLD
+> (`Yahlan.com`, `t.me/joinchat/…`), and emails — but not common filename
+> extensions (`report.pdf`, `photo.jpg`).
 
 This filter runs *after* the active-period and admin checks, so it only applies
 inside the active window.
@@ -374,13 +394,34 @@ curl "https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo" | head -c 300; ech
 You should see `"url": "https://<your-worker>.workers.dev"` and
 `"pending_update_count": 0`.
 
+### 8. Rotating the bot token (after @BotFather /revoke or /token)
+
+`wrangler deploy` does **not** upload `.dev.vars` — `BOT_TOKEN` lives as a
+Cloudflare *secret*, so rotating it requires three steps, which the helper
+script does in one command:
+
+1. Put the **new** token in `.dev.vars` (`BOT_TOKEN=...`)
+2. Run:
+
+```bash
+npm run rotate-token            # optionally: npm run rotate-token https://<your-worker>.workers.dev
+```
+
+It reads the token from `.dev.vars`, pushes it to the `BOT_TOKEN` secret
+(stdin-piped, never echoed to the terminal), re-registers the webhook with the
+new token, and verifies via `getWebhookInfo`.
+
+> ⚠️ If you skip this and only deploy, the worker keeps calling the Telegram
+> API with the old (revoked) token: moderation still runs and gets logged, but
+> `deleteMessage` / fun responses silently fail with `401`.
+
 To unregister the webhook later (e.g. to point the bot at a different worker):
 
 ```bash
 curl -F "url=" https://api.telegram.org/bot<BOT_TOKEN>/setWebhook
 ```
 
-### 8. (Optional) Use the admin panel
+### 9. (Optional) Use the admin panel
 
 The `/admin` audit-log viewer is enabled the moment `ADMIN_PANEL_TOKEN` is set
 (step 4). Open `https://<your-worker>.workers.dev/admin` in a browser, paste
@@ -405,7 +446,7 @@ the token, and the panel returns an HttpOnly signed cookie (12h TTL).
 Change `ADMIN_PANEL_PATH` in `wrangler.toml [vars]` to mount the panel at a
 different URL prefix.
 
-### 9. (Optional) Enable the daily log-prune cron
+### 10. (Optional) Enable the daily log-prune cron
 
 `wrangler.toml` ships with the cron trigger commented out:
 
@@ -418,7 +459,7 @@ Uncomment to prune audit rows older than `LOG_RETENTION_DAYS` every day at
 04:00 UTC. The cron expression is always UTC; the prune is timezone-agnostic
 (it just deletes rows older than N days), so any hour works.
 
-### 10. Add the bot to a group
+### 11. Add the bot to a group
 
 In Telegram, add your bot to a supergroup and **promote it to admin with
 "Delete messages" permission**. Without that, the bot can read messages but

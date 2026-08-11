@@ -246,6 +246,7 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
         deleted,
         message_text: text,
         llm_response: result.llmResponse ?? result.reason,
+        extra: { deleted },
       });
 
       // Post the fun reply AFTER the delete so the original spam is already
@@ -284,4 +285,4 @@ export {
   isActivePeriod,
 };
 export { shouldProcess } from './scheduler';
-export { getFileUrl } from './telegram-api';
+export { getFileDataUrl } from './telegram-api';
