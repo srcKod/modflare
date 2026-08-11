@@ -17,6 +17,13 @@ export interface Env {
   OPENAI_API_KEY: string;
   /** Model identifier, e.g. `google/gemini-2.0-flash-lite-preview-09-16`. */
   MODEL_NAME: string;
+  /**
+   * Optional text-only model used for messages WITHOUT media (no image parts
+   * reach the LLM). Lets cheap/fast text models (e.g. GLM-flash) handle the
+   * common spam/link case while MODEL_NAME (multimodal, e.g. Gemma) handles
+   * images. Falls back to MODEL_NAME when unset.
+   */
+  TEXT_MODEL?: string;
   /** IANA timezone for "night hours", e.g. `America/New_York`. */
   TIMEZONE: string;
   /** Start of active period, 0-23. */
@@ -70,6 +77,13 @@ export interface Env {
   LLM_RESPONSE_FORMAT?: string;
   /** Optional arbitrary JSON object merged into the LLM request body (provider/model-specific params). */
   LLM_EXTRA_BODY_JSON?: string;
+  /**
+   * Optional arbitrary JSON object merged into the request body when the
+   * TEXT_MODEL handles the message (media-free). Falls back to
+   * LLM_EXTRA_BODY_JSON when unset, so both models get the same provider
+   * params unless overridden here.
+   */
+  TEXT_EXTRA_BODY_JSON?: string;
   /** Optional max media download bytes. Defaults to 20MB. */
   MAX_MEDIA_BYTES?: string;
 

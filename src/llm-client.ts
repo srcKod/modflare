@@ -81,8 +81,16 @@ export async function moderateContent(
     content.push({ type: 'image_url', image_url: { url: part.dataUrl } });
   }
 
+  // Route by content: images (media present) use the multimodal MODEL_NAME;
+  // plain text (the common spam/link case) can fall back to a cheap, fast
+  // text-only TEXT_MODEL. Keeps the routing inside the worker from the data
+  // it already has — no client-supplied flag, no gateway dynamic route.
+  // Falls back to MODEL_NAME for both when TEXT_MODEL is unset.
+  const isImage = media.length > 0;
+  const model = isImage ? env.MODEL_NAME : env.TEXT_MODEL || env.MODEL_NAME;
+
   const body: Record<string, unknown> = {
-    model: env.MODEL_NAME,
+    model,
     messages: [
       { role: 'system', content: prompt },
       { role: 'user', content },
@@ -102,20 +110,30 @@ export async function moderateContent(
 
   // Generic provider/model escape hatch: merge arbitrary JSON into the request
   // body. Lets you send the correct thinking-toggle param for whatever model is
-  // configured (e.g. {"thinking":{"type":"disabled"}} for Z.ai GLM,
+  // configured. The image path (MODEL_NAME) uses LLM_EXTRA_BODY_JSON; the text
+  // path (TEXT_MODEL) uses TEXT_EXTRA_BODY_JSON and falls back to the shared
+  // LLM_EXTRA_BODY_JSON when unset — so both models get reasoning handled out
+  // of the box, and each can be overridden independently later.
+  // Examples: {"thinking":{"type":"disabled"}} for Z.ai GLM,
   // {"enable_thinking":false} for Qwen3, {"reasoning_effort":"none"} for
-  // OpenAI) without hardcoding provider-specific code. Invalid JSON is logged
-  // and ignored so moderation never breaks on a misconfigured var.
-  if (env.LLM_EXTRA_BODY_JSON?.trim()) {
+  // OpenAI. Invalid JSON is logged and ignored so moderation never breaks.
+  const extraBodyJson = isImage
+    ? env.LLM_EXTRA_BODY_JSON
+    : env.TEXT_EXTRA_BODY_JSON || env.LLM_EXTRA_BODY_JSON;
+  if (extraBodyJson?.trim()) {
     try {
-      const extra = JSON.parse(env.LLM_EXTRA_BODY_JSON);
+      const extra = JSON.parse(extraBodyJson);
       if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
         Object.assign(body, extra);
       } else {
-        console.error('LLM_EXTRA_BODY_JSON must be a JSON object; ignoring');
+        console.error(
+          `${isImage ? 'LLM_EXTRA_BODY_JSON' : 'TEXT_EXTRA_BODY_JSON'} must be a JSON object; ignoring`,
+        );
       }
     } catch (err) {
-      console.error(`LLM_EXTRA_BODY_JSON invalid JSON: ${String(err)}`);
+      console.error(
+        `${isImage ? 'LLM_EXTRA_BODY_JSON' : 'TEXT_EXTRA_BODY_JSON'} invalid JSON: ${String(err)}`,
+      );
     }
   }
 

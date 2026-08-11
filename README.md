@@ -135,7 +135,8 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `BOT_TOKEN` *(secret)* | Telegram bot token from @BotFather | `123456:ABC-...` |
 | `OPENAI_BASE_URL` | OpenAI-compatible endpoint, no trailing slash | `https://openrouter.ai/api/v1` |
 | `OPENAI_API_KEY` *(secret)* | API key for the provider | `sk-or-v1-...` |
-| `MODEL_NAME` | Model id for the provider | `google/gemma-4-26b-a4b-it` |
+| `MODEL_NAME` | Multimodal model id for the provider (used for images) | `google/gemma-4-26b-a4b-it` |
+| `TEXT_MODEL` *(optional)* | Cheap/fast text-only model for messages **without** media (falls back to `MODEL_NAME` when unset) | `workers-ai/@cf/zai-org/glm-4.7-flash` |
 | `TIMEZONE` | IANA timezone for the active window | `America/New_York` |
 | `START_HOUR` | Active window start, 0-23 | `22` |
 | `END_HOUR` | Active window end, 0-23 (cross-midnight OK) | `6` |
@@ -155,7 +156,8 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `LLM_TIMEOUT_MS` | LLM request timeout in milliseconds | `60000` |
 | `LLM_MAX_TOKENS` | Cap on LLM output tokens. Bounds slow/reasoning-heavy models | `2048` |
 | `LLM_RESPONSE_FORMAT` | Opt-in strict JSON output: set `json` to send `response_format` (model-dependent; some endpoints 400) | *none* |
-| `LLM_EXTRA_BODY_JSON` | Arbitrary JSON object merged into the LLM request body (provider/model-specific params, e.g. disabling thinking) | *none* |
+| `LLM_EXTRA_BODY_JSON` | Arbitrary JSON object merged into the LLM request body for the **image** model (`MODEL_NAME`), e.g. disabling thinking | *none* |
+| `TEXT_EXTRA_BODY_JSON` *(optional)* | Same, for the **text** model (`TEXT_MODEL`); falls back to `LLM_EXTRA_BODY_JSON` when unset | *none* |
 | `LOG_LEVEL` | Minimum level to persist to the audit log: `debug` / `info` / `warn` / `error` | `info` |
 | `LOG_RETENTION_DAYS` | Delete audit rows older than this many days | `30` |
 | `LOG_ENABLED` | Master switch for the audit logger (`false` disables all D1 writes) | `true` |

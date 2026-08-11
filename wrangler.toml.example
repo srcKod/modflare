@@ -13,8 +13,11 @@ compatibility_date = "2024-10-01"
 #   https://gateway.ai.cloudflare.com/v1/<ACCOUNT>/<GATEWAY>  (Cloudflare AI Gateway)
 [vars]
 OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
-MODEL_NAME = "google/gemma-4-26b-a4b-it:free" 
-
+MODEL_NAME = "google/gemma-4-26b-a4b-it:free"
+# Optional: cheap/fast text-only model for messages WITHOUT media (the common
+# spam/link case). MODEL_NAME (multimodal) is used for images/text-vs-image
+# automatically. When unset, MODEL_NAME is used for everything.
+# TEXT_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash"
 # Optional LLM tuning. All omitted here -> code defaults (see README).
 # LLM_TIMEOUT_MS = "60000"          # LLM request timeout, ms
 # LLM_MAX_TOKENS = "2048"           # cap on LLM output tokens
@@ -31,6 +34,10 @@ MODEL_NAME = "google/gemma-4-26b-a4b-it:free"
 # chat_template_kwargs.enable_thinking:false. With thinking ON and a tight
 # max_tokens cap, reasoning can consume the whole budget -> empty content ->
 # unparseable (fail-open). Disabling thinking is ~4x faster / ~7x fewer tokens.
+#
+# LLM_EXTRA_BODY_JSON applies to the IMAGE model (MODEL_NAME); TEXT_EXTRA_BODY_JSON
+# applies to the TEXT model. When TEXT_EXTRA_BODY_JSON is unset it falls back to
+# LLM_EXTRA_BODY_JSON, so both are covered with one value.
 # LLM_EXTRA_BODY_JSON = "{\"chat_template_kwargs\":{\"enable_thinking\":false}}"
 
 # Time-based activation (night hours). IANA timezone.
