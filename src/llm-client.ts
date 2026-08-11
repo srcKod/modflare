@@ -62,7 +62,7 @@ export async function moderateContent(
   const prompt =
     (env.MODERATION_PROMPT?.trim() || DEFAULT_PROMPT) +
     (wantFun ? FUN_RESPONSE_ADDENDUM + `\n${langHint}` : '');
-  const timeoutMs = Number(env.LLM_TIMEOUT_MS) || 15000;
+  const timeoutMs = Number(env.LLM_TIMEOUT_MS) || 30000;
 
   const content: ContentPart[] = [];
 
@@ -87,6 +87,7 @@ export async function moderateContent(
     ],
     temperature: 0,
     response_format: { type: 'json_object' },
+    stream: false,
   };
 
   const endpoint = `${env.OPENAI_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
