@@ -78,6 +78,8 @@ export default {
     env: Env,
     _ctx: ExecutionContext,
   ): Promise<Response> {
+    const url = new URL(request.url);
+
     // Admin panel routes (login, filtered audit log view, CSV export).
     // Only active when ADMIN_PANEL_TOKEN is set; otherwise handleAdmin
     // returns null and we fall through to the webhook handler.
@@ -86,7 +88,7 @@ export default {
 
     // Browsers auto-request /favicon.ico on every page load; return a tiny
     // 1x1 transparent PNG so the dev console isn't spammed with 405s.
-    if (new URL(request.url).pathname === '/favicon.ico') {
+    if (url.pathname === '/favicon.ico') {
       return faviconResponse();
     }
 

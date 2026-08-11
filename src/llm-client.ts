@@ -62,7 +62,8 @@ export async function moderateContent(
   const prompt =
     (env.MODERATION_PROMPT?.trim() || DEFAULT_PROMPT) +
     (wantFun ? FUN_RESPONSE_ADDENDUM + `\n${langHint}` : '');
-  const timeoutMs = Number(env.LLM_TIMEOUT_MS) || 30000;
+  const timeoutMs = Number(env.LLM_TIMEOUT_MS) || 60000;
+  const maxTokens = Number(env.LLM_MAX_TOKENS) || 2048;
 
   const content: ContentPart[] = [];
 
@@ -79,7 +80,7 @@ export async function moderateContent(
     content.push({ type: 'image_url', image_url: { url: part.url } });
   }
 
-  const body = {
+  const body: Record<string, unknown> = {
     model: env.MODEL_NAME,
     messages: [
       { role: 'system', content: prompt },
@@ -87,7 +88,16 @@ export async function moderateContent(
     ],
     temperature: 0,
     stream: false,
+    max_tokens: maxTokens,
   };
+
+  // Opt-in structured output. Off by default: not every OpenAI-compatible
+  // endpoint accepts `response_format` (some return 400), and parseModeration
+  // already tolerates JSON inside code fences / prose. Set LLM_RESPONSE_FORMAT
+  // to "json" only when the configured model supports strict JSON output.
+  if (env.LLM_RESPONSE_FORMAT === 'json') {
+    body.response_format = { type: 'json_object' };
+  }
 
   const endpoint = `${env.OPENAI_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
 
@@ -95,15 +105,17 @@ export async function moderateContent(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(endpoint, {
+    const init = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        'Cache-Control': 'no-store',
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    });
+    };
+    const res = await fetch(endpoint, init);
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
@@ -113,16 +125,26 @@ export async function moderateContent(
       return { flag: false, reason: `llm_error:${res.status}` };
     }
 
-    const json = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const raw = json.choices?.[0]?.message?.content ?? '';
-    if (!raw) {
-      // Empty content is usually a quota/refusal/proxy issue. Dump the full
-      // response so it's visible in the dev log for debugging.
-      console.error(`LLM returned 200 but no message content. Full response: ${JSON.stringify(json).slice(0, 600)}`);
+    // Non-streaming (stream:false) — plain JSON chat/completions response.
+    // This is the most widely supported OpenAI-compatible shape; when the
+    // provider includes a reasoning/thinking phase, the final `content` still
+    // arrives here once the answer is produced.
+    let content = '';
+    try {
+      const json = (await res.json()) as {
+        choices?: { message?: { content?: string | null } }[];
+      };
+      content = json.choices?.[0]?.message?.content ?? '';
+    } catch (jsonErr) {
+      const text = await res.text().catch(() => '');
+      console.error(`LLM non-json response: ${text.slice(0, 300)}`);
+      return { flag: false, reason: 'llm_error', llmResponse: text };
     }
-    return parseModeration(raw, raw);
+
+    if (!content) {
+      console.error('LLM returned 200 with empty content');
+    }
+    return parseModeration(content, content);
   } catch (err) {
     const name = err instanceof Error ? err.name : '';
     const timedOut = name === 'AbortError';

@@ -62,8 +62,12 @@ export interface Env {
    * unset, no dialect hint is sent and the model falls back to the audience.
    */
   FUNRESPONSE_DIALECT?: string;
-  /** Optional LLM request timeout in ms. Defaults to 15000. */
+  /** Optional LLM request timeout in ms. Defaults to 60000. */
   LLM_TIMEOUT_MS?: string;
+  /** Optional cap on LLM output tokens. Bounds reasoning-heavy models. */
+  LLM_MAX_TOKENS?: string;
+  /** Optional structured output: set `json` to send response_format json_object (model-dependent). */
+  LLM_RESPONSE_FORMAT?: string;
   /** Optional max media download bytes. Defaults to 20MB. */
   MAX_MEDIA_BYTES?: string;
 

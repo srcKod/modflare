@@ -152,16 +152,31 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `FUNRESPONSE_DIALECT` | Optional dialect of the language (e.g. `Egyptian` / `Gulf` / `Levantine` for Arabic) | *none → no dialect hint* |
 | `MODERATION_PROMPT` | Custom moderation system prompt | *strict built-in prompt* |
 | `WEBHOOK_SECRET_TOKEN` *(secret, optional)* | Validates webhook origin | *none* |
-| `LLM_TIMEOUT_MS` | LLM request timeout in milliseconds | `15000` |
+| `LLM_TIMEOUT_MS` | LLM request timeout in milliseconds | `60000` |
+| `LLM_MAX_TOKENS` | Cap on LLM output tokens. Bounds slow/reasoning-heavy models | `2048` |
+| `LLM_RESPONSE_FORMAT` | Opt-in strict JSON output: set `json` to send `response_format` (model-dependent; some endpoints 400) | *none* |
 | `LOG_LEVEL` | Minimum level to persist to the audit log: `debug` / `info` / `warn` / `error` | `info` |
 | `LOG_RETENTION_DAYS` | Delete audit rows older than this many days | `30` |
 | `LOG_ENABLED` | Master switch for the audit logger (`false` disables all D1 writes) | `true` |
 | `ADMIN_PANEL_PATH` | URL prefix for the `/admin` audit-log viewer (in `wrangler.toml` `[vars]`) | `/admin` |
 | `ADMIN_PANEL_TOKEN` *(secret, optional)* | Token required to access the admin panel. Without it the panel is disabled entirely | *none* |
 
-> **Cloudflare Workers AI:** set `OPENAI_BASE_URL =
-> https://gateway.ai.cloudflare.com/v1/<ACCOUNT>/<GATEWAY>` and any multimodal
-> `MODEL_NAME` Cloudflare hosts (e.g. `@cf/meta/llama-4-scout-17b-16e-instruct`).
+> **Choosing a model (latency matters).** The bot works with any OpenAI-
+> compatible `/v1/chat/completions` endpoint. Prefer a model that is:
+>
+> - **Fast & small** — moderation should finish in a few seconds; big or slow
+>   models make deletions lag and can exceed `LLM_TIMEOUT_MS`.
+> - **No (or minimal) chain-of-thought / reasoning** — reasoning models spend
+>   tens of seconds "thinking" before answering. We hit this with
+>   `glm-4.7-flash`: its default thinking mode took 35s+ per message and timed
+>   out before producing a decision. Avoid reasoning/thinking models here.
+> - **Multimodal (optional)** — only needed to moderate photos/videos; for
+>   text+links a plain text model is enough.
+>
+> Works well: `google/gemma-4-26b-a4b-it` (OpenRouter) or, via Cloudflare AI
+> Gateway (set `OPENAI_BASE_URL =
+> https://gateway.ai.cloudflare.com/v1/<ACCOUNT>/<GATEWAY>`), `@cf/google/gemma-4-26b-a4b-it`
+> or `@cf/meta/llama-4-scout-17b-16e-instruct`.
 
 ### Behaviors explained
 

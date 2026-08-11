@@ -15,6 +15,11 @@ compatibility_date = "2024-10-01"
 OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 MODEL_NAME = "google/gemma-4-26b-a4b-it:free" 
 
+# Optional LLM tuning. All omitted here -> code defaults (see README).
+# LLM_TIMEOUT_MS = "60000"          # LLM request timeout, ms
+# LLM_MAX_TOKENS = "2048"           # cap on LLM output tokens
+# LLM_RESPONSE_FORMAT = "json"      # strict JSON output, model-dependent
+
 # Time-based activation (night hours). IANA timezone.
 TIMEZONE = "Asia/Baghdad"
 START_HOUR = 21
