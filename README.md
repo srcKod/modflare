@@ -148,6 +148,7 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `PROCESS_MODE` | Which messages to analyze: `all` / `media` / `links` / `media-links` | `media-links` |
 | `ADMIN_USERNAMES` | Comma-separated admin usernames (local match, no API call) | *none → use API* |
 | `ADMIN_USER_IDS` | Comma-separated admin numeric IDs (immune to username changes) | *none → use API* |
+| `ALLOWED_GROUP_IDS` *(optional)* | Comma-separated numeric chat IDs the bot is allowed to moderate (supergroup IDs are negative like `-1001234567890`). Unset/empty = all groups | *none = all groups* |
 | `ENABLE_FUNRESPONSE` | Post a kind/harmless funny reply after a flagged deletion | `false` |
 | `FUNRESPONSE_LANGUAGE` | Language for the funny reply | `English` |
 | `FUNRESPONSE_DIALECT` | Optional dialect of the language (e.g. `Egyptian` / `Gulf` / `Levantine` for Arabic) | *none → no dialect hint* |
@@ -242,6 +243,15 @@ never sent to the LLM. Admin detection is a **local match** against
 `ADMIN_USERNAMES` and/or `ADMIN_USER_IDS` (no API cost). If neither is
 configured, the bot falls back to one `getChatMember` API call per message.
 `ADMIN_USER_IDS` is immune to username changes and is the recommended option.
+
+**Chat whitelist (`ALLOWED_GROUP_IDS`)**
+By default the bot moderates any group/supergroup it is added to, which lets a
+stray copy burn Worker + AI-token quota across many unrelated chats. Set
+`ALLOWED_GROUP_IDS` (comma-separated numeric chat IDs, negatives for
+supergroups) to restrict moderation to only those chats. Any message from a
+non-listed chat is ignored immediately — before the activation gate, admin
+lookup, video policy, or any LLM call — and logged as `group_not_whitelisted`.
+Unset or empty keeps today's behavior (all groups).
 
 **Funny reply (`ENABLE_FUNRESPONSE` / `FUNRESPONSE_LANGUAGE` / `FUNRESPONSE_DIALECT`)**
 When enabled, a flagged message is deleted **and** the same single LLM call

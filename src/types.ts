@@ -56,6 +56,13 @@ export interface Env {
    */
   ADMIN_USER_IDS?: string;
   /**
+   * Optional comma-separated numeric chat IDs the bot is allowed to moderate.
+   * Supergroup/group IDs are negative. When set, any message from a chat not
+   * in the list is ignored before any LLM/media/admin work. Unset or empty =
+   * allow all groups (backward compatible / fail-open).
+   */
+  ALLOWED_GROUP_IDS?: string;
+  /**
    * When true and a message is flagged+deleted, post a kind, harmless funny
    * reply to the group (in the chat's language).
    */

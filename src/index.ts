@@ -158,6 +158,22 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
   // Only moderate in groups (and supergroups). Ignore private chats/admin DMs.
   if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
 
+  // Optional chat whitelist. When ALLOWED_GROUP_IDS is set, only moderate in
+  // those specific chats (numeric IDs, negatives for supergroups). Any other
+  // chat is ignored before the activation gate, admin lookup, video policy, or
+  // LLM call, so a stray copy of the bot can't burn CPU/AI-token quota. Unset
+  // or empty = allow all groups (backward compatible / fail-open).
+  const allowedGroups = (env.ALLOWED_GROUP_IDS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n));
+  if (allowedGroups.length > 0 && !allowedGroups.includes(msg.chat.id)) {
+    await logger.debug('group_not_whitelisted', { ...ctx });
+    return;
+  }
+
   // Activation gate.
   if (!isActivePeriod(env)) {
     await logger.debug('inactive_period', { ...ctx });

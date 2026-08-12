@@ -62,6 +62,12 @@ PROCESS_MODE = "media-links"
 # ADMIN_USERNAMES = ""
 # ADMIN_USER_IDS = ""
 
+# Optional chat whitelist: comma-separated numeric chat IDs the bot is allowed
+# to moderate. Supergroup IDs are negative (e.g. -1001234567890). When set, any
+# message from another chat is ignored before any LLM/media/admin work. Unset or
+# empty = allow all groups (backward compatible / fail-open).
+# ALLOWED_GROUP_IDS = "-1001234567890, -1009876543210"
+
 # Admin panel (audit-log viewer). ADMIN_PANEL_TOKEN (a secret, in .dev.vars /
 # `wrangler secret put`) enables the panel; ADMIN_PANEL_PATH sets the URL
 # prefix (default /admin). The panel is disabled entirely unless the token is
