@@ -6,7 +6,7 @@ import {
   isAdminUser,
   isPolicyVideo,
 } from './telegram-api';
-import { moderateContent } from './llm-client';
+import { moderateContent, resolveModel } from './llm-client';
 import { sendMessage } from './telegram-api';
 import { makeLogger } from './logger';
 import { handleAdmin } from './admin';
@@ -139,11 +139,15 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
   if (!msg) return;
 
   const ctx = {
-    // Provider + model of the configured LLM endpoint, attached to every
-    // log row so the audit panel can attribute decisions/errors to a
-    // specific endpoint even after a switch.
+    // Provider of the configured LLM endpoint, attached to every log row so
+    // the audit panel can attribute decisions/errors to a specific endpoint
+    // even after a switch.
     provider: env.OPENAI_BASE_URL ?? null,
-    model: env.MODEL_NAME ?? null,
+    // Model stays null until the routing decision is known (text ->
+    // TEXT_MODEL, media -> MODEL_NAME) and is set just before the LLM call
+    // below, so rows never attribute an event to a model that didn't
+    // handle it (pre-LLM skips/errors log null).
+    model: null as string | null,
     chat_id: msg.chat.id,
     chat_username: msg.chat.username ?? null,
     chat_title: msg.chat.title ?? null,
@@ -229,6 +233,10 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
       return;
     }
 
+    // Same helper as moderateContent: record the model that will actually
+    // process this message (TEXT_MODEL for text, MODEL_NAME for media).
+    ctx.model = resolveModel(env, media.length > 0);
+
     await logger.debug('moderating', {
       ...ctx,
       textLen: text.length,
@@ -298,6 +306,7 @@ export {
   isAdminUser,
   isPolicyVideo,
   moderateContent,
+  resolveModel,
   isActivePeriod,
 };
 export { shouldProcess } from './scheduler';

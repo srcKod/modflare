@@ -41,6 +41,17 @@ type ContentPart =
   | { type: 'image_url'; image_url: { url: string } };
 
 /**
+ * Resolve the model that will handle a moderation request: media (image
+ * parts) go to the multimodal MODEL_NAME; plain text goes to the cheap,
+ * fast TEXT_MODEL, falling back to MODEL_NAME when TEXT_MODEL is unset.
+ * Single source of truth shared by the LLM call and the audit logger, so
+ * the D1 row always names the model that actually processed the message.
+ */
+export function resolveModel(env: Env, hasMedia: boolean): string {
+  return hasMedia ? env.MODEL_NAME : env.TEXT_MODEL || env.MODEL_NAME;
+}
+
+/**
  * Send text + media to an OpenAI-compatible chat completions endpoint and ask
  * it to decide whether the content should be flagged/removed.
  *
@@ -87,7 +98,7 @@ export async function moderateContent(
   // it already has — no client-supplied flag, no gateway dynamic route.
   // Falls back to MODEL_NAME for both when TEXT_MODEL is unset.
   const isImage = media.length > 0;
-  const model = isImage ? env.MODEL_NAME : env.TEXT_MODEL || env.MODEL_NAME;
+  const model = resolveModel(env, isImage);
 
   const body: Record<string, unknown> = {
     model,
