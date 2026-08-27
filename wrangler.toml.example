@@ -120,3 +120,34 @@ migrations_dir = "migrations"
 # works. Uncomment to enable.
 # [[triggers]]
 # crons = ["0 4 * * *"]
+
+# ---------------------------------------------------------------------------
+# Module rules: admin panel static assets.
+#
+# The admin panel is split into src/templates/admin.html (markup),
+# src/templates/css/style.css and src/templates/js/app.js (client logic).
+# All three are imported into the worker as Text (plain strings) and served
+# back verbatim behind the admin cookie — what's in the repo is byte-for-byte
+# what the browser gets.
+#
+# Why these rules are needed:
+#  - .html is already Text by Wrangler's defaults (no rule needed).
+#  - .css has NO default rule, so without one the import fails.
+#  - .js is treated as an ES module by default ("No matching export for
+#    default"); the rule below overrides that for the templates folder only.
+#
+# Wrangler-4 gotchas baked in here:
+#  - the field is `globs` (older docs show `include`).
+#  - `fallthrough = true` is REQUIRED: a rule without it silently disables
+#    all later rules of the same type, which would break the built-in
+#    .html -> Text default and fail the build.
+# ---------------------------------------------------------------------------
+[[rules]]
+type = "Text"
+globs = ["**/templates/css/*.css"]
+fallthrough = true
+
+[[rules]]
+type = "Text"
+globs = ["**/templates/js/*.js"]
+fallthrough = true

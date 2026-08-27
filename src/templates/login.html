@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin login</title>
+<style>body{font-family:system-ui,sans-serif;max-width:360px;margin:80px auto;padding:0 20px;color:#1a202c}
+h1{font-size:1.4rem}input{width:100%;padding:10px;box-sizing:border-box;margin:8px 0;font-size:1rem}
+button{width:100%;padding:10px;background:#2563eb;color:#fff;border:0;border-radius:6px;font-size:1rem;cursor:pointer}
+.error{color:#dc2626;min-height:1.2em}</style></head><body>
+<h1>Admin login</h1>
+<input type="password" id="token" placeholder="Access token" autofocus>
+<button onclick="login()">Sign in</button>
+<p class="error" id="err"></p>
+<script>
+async function login(){
+  const token=document.getElementById('token').value;
+  const err=document.getElementById('err');
+  err.textContent='';
+  const r=await fetch('__BASE_PATH__/login',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({token})});
+  if(r.ok){location.href='__BASE_PATH__/';}
+  else if(r.status===401){err.textContent='Invalid token';}
+  else{err.textContent='Login failed ('+r.status+')';}
+}
+</script></body></html>

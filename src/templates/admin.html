@@ -1,0 +1,48 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audit Log</title>
+<link rel="stylesheet" href="__BASE_PATH__/style.css"></head><body>
+<header>
+  <h1>Audit Log</h1>
+  <div class="spacer"></div>
+  <a class="logout" href="__BASE_PATH__/logout">Log out</a>
+</header>
+<main>
+  <div class="stats" id="stats"></div>
+  <div class="filters" id="filters">
+    <select id="f-level"><option value="">level</option><option>debug</option><option>info</option><option>warn</option><option>error</option></select>
+    <select id="f-event"><option value="">event</option></select>
+    <select id="f-decision"><option value="">decision</option><option>delete</option><option>keep</option></select>
+    <input id="f-chat" placeholder="chat id" style="width:110px">
+    <input id="f-user" placeholder="user id" style="width:110px">
+    <input id="f-from" type="date" style="width:125px" title="From date (UTC)">
+    <input id="f-to" type="date" style="width:125px" title="To date (UTC)">
+    <input id="f-q" placeholder="search text/reason" style="width:200px">
+    <button id="apply">Apply</button>
+    <button id="export" title="Download filtered rows as CSV">Export CSV</button>
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th data-k="ts" class="col-time">Time</th>
+      <th data-k="level" class="col-level">Level</th>
+      <th data-k="event" class="col-event">Event</th>
+      <th data-k="chat_username" class="col-chat">Chat</th>
+      <th data-k="user_id" class="col-user">User</th>
+      <th data-k="decision" class="col-decision">Decision</th>
+      <th data-k="reason" class="col-reason">Reason</th>
+      <th data-k="message_text" class="col-msg">Message</th>
+      <th class="col-details" aria-label="Row details"></th>
+    </tr></thead>
+    <tbody id="rows"><tr class="empty"><td colspan="9">Loading…</td></tr></tbody>
+  </table>
+  </div>
+  <div class="pagination">
+    <button id="prev">‹ Prev</button>
+    <span class="info" id="page-info"></span>
+    <button id="next">Next ›</button>
+  </div>
+</main>
+<script>const base=__BASE_JSON__;</script>
+<script src="__BASE_PATH__/app.js"></script>
+</body></html>

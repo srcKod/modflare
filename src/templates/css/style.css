@@ -1,0 +1,179 @@
+:root{--line:#e5e7eb;--bg:#fff;--muted:#6b7280}
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;margin:0;background:#f9fafb;color:#111827}
+header{background:var(--bg);border-bottom:1px solid var(--line);padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+header h1{font-size:1.1rem;margin:0}
+header .spacer{flex:1}
+main{padding:20px;max-width:1400px;margin:0 auto}
+.stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:120px}
+.stat .num{font-size:1.6rem;font-weight:600}
+.stat .lbl{font-size:.8rem;color:var(--muted)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+.filters input,.filters select{padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:.9rem;background:#fff}
+.filters button{padding:6px 14px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:.9rem}
+table{width:100%;border-collapse:collapse;background:var(--bg)}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:.85rem;vertical-align:top}
+th{position:sticky;top:0;background:#f3f4f6;cursor:pointer;user-select:none}
+td .reason{color:var(--muted);max-width:340px;white-space:pre-wrap;word-break:break-word}
+td .mono{font-family:ui-monospace,monospace;font-size:.75rem}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.72rem;font-weight:600}
+.badge.delete{background:#fee2e2;color:#b91c1c}
+.badge.keep{background:#dcfce7;color:#15803d}
+.badge.warn{background:#fef3c7;color:#b45309}
+.badge.error{background:#fee2e2;color:#b91c1c}
+.badge.info{background:#e0e7ff;color:#4338ca}
+.badge.debug{background:#f3f4f6;color:#4b5563}
+.pagination{display:flex;gap:8px;align-items:center;margin-top:16px}
+.pagination button{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}
+.pagination button:disabled{opacity:.4;cursor:default}
+.pagination .info{color:var(--muted);font-size:.85rem}
+a.logout{color:#2563eb;text-decoration:none;font-size:.9rem}
+.empty{color:var(--muted);text-align:center;padding:40px 0}
+.error{color:#dc2626;text-align:center;padding:20px}
+
+/* Responsive table wrapper: horizontal scroll on narrow screens so columns
+   don't squish unreadably. */
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{min-width:760px}
+.col-time{width:148px}
+.col-level{width:64px}
+.col-event{width:120px}
+.col-decision{width:78px}
+.col-details{width:54px}
+
+/* Friendly identifiers: primary value is the @handle (link-styled); the
+   fallback id sits underneath in a smaller mono style. */
+.id-cell{display:flex;flex-direction:column;line-height:1.25;min-width:120px}
+.id-cell .primary{font-weight:600;color:#111827}
+.id-cell .primary.handle{color:#2563eb}
+.id-cell .secondary{font-size:.7rem;color:var(--muted);font-family:ui-monospace,monospace}
+/* Reason & Message cells: clamp to 2 lines in the main table so a long
+   message never blows up the row height. The full text is always available
+   in the expanded Details panel below. */
+.col-msg .reason,.col-reason .reason{
+  color:var(--muted);max-width:340px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;white-space:pre-wrap;word-break:break-word
+}
+
+/* Details toggle: small ghost button that opens an inline expansion row. */
+.details-btn{
+  display:inline-block;padding:4px 10px;border:1px solid var(--line);
+  border-radius:6px;background:#fff;cursor:pointer;font-size:.78rem;
+  color:#2563eb;user-select:none;white-space:nowrap;font-weight:500
+}
+.details-btn:hover{background:#eff6ff}
+.details-btn[aria-expanded="true"]{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8}
+
+/* Expanded details row: spans all columns, renders the full audit row as a
+   structured property panel. The inner is a 2-column CSS grid at wide
+   widths: When+Identity pair side-by-side, Event+Action pair side-by-side,
+   Message and LLM verdict span both columns. At narrow widths it falls
+   back to a single column. */
+.details-row td{background:#f9fafb;padding:0;border-bottom:1px solid var(--line)}
+.details-inner{
+  padding:12px 16px;
+  font-size:.82rem;
+  line-height:1.5;
+  color:#374151
+}
+/* At-a-glance metadata bar: ts | id | level | event | decision */
+.d-meta{
+  display:flex;align-items:center;gap:6px;
+  flex-wrap:wrap;margin-bottom:6px;
+  font-size:.78rem
+}
+.d-meta .sep{color:var(--muted);opacity:.5}
+.d-ts{font-family:ui-monospace,monospace;font-size:.76rem;color:#111827}
+.d-id{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--muted)}
+/* Identity: chat + user on separate lines */
+.d-who{
+  display:flex;flex-wrap:wrap;gap:4px 16px;
+  margin-bottom:4px;font-size:.78rem
+}
+.d-who-item{display:flex;align-items:baseline;gap:4px}
+.d-who-item .who-key{color:var(--muted);font-size:.72rem;min-width:30px}
+.d-who-item .who-val{font-weight:600;color:#111827}
+.d-who-item .who-id{font-family:ui-monospace,monospace;font-size:.68rem;color:var(--muted)}
+/* Message bubble — subtle box around the posted text */
+.d-bubble{
+  background:#fff;border:1px solid var(--line);
+  border-radius:8px;padding:8px 12px;
+  font-size:.82rem;line-height:1.4;
+  color:#111827;margin:6px 0;
+  max-height:140px;overflow-y:auto;
+  white-space:pre-wrap;word-break:break-word
+}
+/* Reason line — subdued */
+.d-why{
+  font-size:.76rem;color:#6b7280;
+  margin-bottom:4px;line-height:1.35
+}
+/* LLM attribution: provider · model · flag on one line */
+.d-ai{
+  display:flex;align-items:center;gap:6px;
+  flex-wrap:wrap;margin-bottom:4px;
+  font-size:.72rem;color:var(--muted)
+}
+.d-ai .ai-prov{font-weight:500;color:#475569}
+.d-ai .ai-sep{opacity:.4}
+/* fun_response: green left-border callout — the visual focal point */
+.d-fun{
+  background:#ecfdf5;border-left:3px solid #10b981;
+  padding:8px 12px;border-radius:0 6px 6px 0;
+  color:#064e3b;font-style:italic;
+  font-size:.84rem;line-height:1.45;
+  margin-bottom:4px
+}
+/* Per-row provider/model chip shown under the Reason cell so users can
+   see at a glance which LLM produced each row. */
+.llm-meta{
+  margin-top:3px;font-size:.68rem;color:var(--muted);
+  display:flex;align-items:center;gap:4px;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+.llm-meta .prov{color:#475569;font-weight:500}
+.llm-meta .sep{opacity:.5}
+.llm-meta .model{color:#6b7280}
+.callout{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.76rem;font-weight:600}
+.flag-on{background:#fee2e2;color:#b91c1c}
+.flag-off{background:#dcfce7;color:#15803d}
+/* Raw JSON toggle — minimal text link */
+.d-raw{margin-top:2px}
+.d-raw>summary{
+  list-style:none;display:inline-flex;align-items:center;gap:4px;
+  font-size:.7rem;color:#6b7280;cursor:pointer;user-select:none
+}
+.d-raw>summary::-webkit-details-marker{display:none}
+.d-raw>summary::before{
+  content:"{ }";font-family:ui-monospace,monospace;font-size:.72rem;
+  color:#9ca3af;letter-spacing:-1px
+}
+.d-raw>summary:hover{color:#374151}
+.d-raw[open]>summary{color:#1d4ed8}
+.d-raw[open]>summary::before{color:#2563eb}
+.d-raw pre{
+  margin:8px 0 0;background:#0f172a;color:#e2e8f0;
+  padding:10px 12px;border-radius:6px;font-size:.72rem;
+  overflow:auto;max-height:220px;line-height:1.45
+}
+
+/* Narrow screens: stack filters, shrink paddings, hide less-critical columns. */
+@media (max-width:720px){
+  main{padding:12px}
+  .filters input,.filters select{font-size:.8rem}
+  .col-time,.col-level{width:auto}
+  th,td{padding:6px 8px;font-size:.78rem}
+  .col-decision{display:none}
+  .id-cell{min-width:0}
+  /* Details panel: tighter on phones */
+  .details-inner{padding:8px 10px;font-size:.76rem}
+  .d-bubble{max-height:100px;font-size:.78rem}
+  .d-fun{font-size:.78rem;padding:6px 10px}
+  /* Tighter table on phones: shorter time column, smaller fonts. */
+  .col-time{width:110px}
+  .col-event{width:auto}
+  .id-cell .primary{font-size:.78rem}
+  .id-cell .secondary{font-size:.65rem}
+}
