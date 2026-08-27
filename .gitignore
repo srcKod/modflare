@@ -4,3 +4,4 @@ dist/
 .wrangler/
 wrangler.toml
 *.log
+skills/
