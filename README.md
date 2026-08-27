@@ -152,6 +152,8 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `ENABLE_FUNRESPONSE` | Post a kind/harmless funny reply after a flagged deletion | `false` |
 | `FUNRESPONSE_LANGUAGE` | Language for the funny reply | `English` |
 | `FUNRESPONSE_DIALECT` | Optional dialect of the language (e.g. `Egyptian` / `Gulf` / `Levantine` for Arabic) | *none → no dialect hint* |
+| `ENABLE_SELF_CLEAN` | Auto-delete the bot's own posted messages (e.g. fun replies) after a TTL | `false` |
+| `SELF_CLEAN_TTL_MINUTES` | Minutes a tracked bot message lives before the cron deletes it | `60` |
 | `MODERATION_PROMPT` | Custom moderation system prompt | *strict built-in prompt* |
 | `WEBHOOK_SECRET_TOKEN` *(secret, optional)* | Validates webhook origin | *none* |
 | `LLM_TIMEOUT_MS` | LLM request timeout in milliseconds | `60000` |
@@ -262,6 +264,24 @@ to phrase the reply in a specific regional dialect of that language (e.g. `Egypt
 rather than the standard form. The reply is never mean toward the poster, and on
 any LLM error it falls back to a safe generic line (so the feature never posts
 something rude or breaks the bot).
+
+**Bot message self-clean (`ENABLE_SELF_CLEAN` / `SELF_CLEAN_TTL_MINUTES`)**
+When enabled, every message the bot itself posts (currently the fun reply) is
+recorded in the `bot_messages` table (migration 0006) with its Telegram
+`message_id`, chat ID, the chat's `@username`, the reply body (capped at 500
+chars), and a kind (`fun`). A `*/10 * * * *` cron trigger then deletes each
+message via the Telegram API once it is older than `SELF_CLEAN_TTL_MINUTES`
+(default 60) and drops the row — so the bot's replies don't linger in the
+group forever.
+
+Rows are also dropped when a message can never be deleted: it is already gone
+(deleted with `alreadyGone: true` in the event), it outlived Telegram's
+~48-hour delete window (`bot_message_cleanup_expired`, debug level), or 5
+delete attempts failed (`bot_message_cleanup_failed`, debug level).
+Successful deletions are logged as `bot_message_deleted` (info). The pending
+queue — with per-row age, kind, and retry count — is visible in the admin
+panel's **Bot queue** tab. The whole feature is a no-op unless D1 is bound
+and `ENABLE_SELF_CLEAN = "true"`.
 
 **Audit logging (D1)**
 The bot writes a structured audit trail to a **D1** database — one row per
@@ -454,22 +474,31 @@ the token, and the panel returns an HttpOnly signed cookie (12h TTL).
   reason, LLM attribution (provider · model · flag pill), fun_response
   callout (green left-border when present), and a raw JSON toggle.
 - **Export CSV** — downloads the current filtered view (up to 5,000 rows).
+- **Bot queue tab** (`?tab=bot-queue`) — live view of the self-clean queue
+  (`ENABLE_SELF_CLEAN`): message ID, chat, reply body, kind filter, age with
+  a `due` badge, and retry attempts.
 
 Change `ADMIN_PANEL_PATH` in `wrangler.toml [vars]` to mount the panel at a
 different URL prefix.
 
-### 10. (Optional) Enable the daily log-prune cron
+### 10. (Optional) Enable the cron triggers
 
-`wrangler.toml` ships with the cron trigger commented out:
+`wrangler.toml` ships with two cron triggers (expressions are always UTC):
 
 ```toml
 [[triggers]]
-crons = ["0 4 * * *"]
+crons = ["*/10 * * * *", "0 4 * * *"]
 ```
 
-Uncomment to prune audit rows older than `LOG_RETENTION_DAYS` every day at
-04:00 UTC. The cron expression is always UTC; the prune is timezone-agnostic
-(it just deletes rows older than N days), so any hour works.
+- `*/10 * * * *` — **bot message self-clean**: deletes tracked bot messages
+  older than `SELF_CLEAN_TTL_MINUTES`. Only does work when
+  `ENABLE_SELF_CLEAN = "true"`. For high-traffic groups use `*/5 * * * *`
+  and update `CRON_BOT_CLEANUP` in `src/index.ts` to match.
+- `0 4 * * *` — **audit-log prune**: deletes audit rows older than
+  `LOG_RETENTION_DAYS`. The prune is timezone-agnostic (it just deletes rows
+  older than N days), so any hour works.
+
+Remove either expression from the array if you don't want that job.
 
 ### 11. Add the bot to a group
 

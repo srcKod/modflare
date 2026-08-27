@@ -76,6 +76,17 @@ export interface Env {
    * unset, no dialect hint is sent and the model falls back to the audience.
    */
   FUNRESPONSE_DIALECT?: string;
+  /**
+   * When 'true', outgoing bot messages (e.g. fun replies) are tracked in
+   * the bot_messages table and deleted by the cron trigger after
+   * SELF_CLEAN_TTL_MINUTES. Unset or anything else = disabled (default).
+   */
+  ENABLE_SELF_CLEAN?: string;
+  /**
+   * Minutes a tracked bot message lives before the cron deletes it.
+   * Defaults to 60. Telegram refuses to delete messages older than ~48h.
+   */
+  SELF_CLEAN_TTL_MINUTES?: string;
   /** Optional LLM request timeout in ms. Defaults to 60000. */
   LLM_TIMEOUT_MS?: string;
   /** Optional cap on LLM output tokens. Bounds reasoning-heavy models. */

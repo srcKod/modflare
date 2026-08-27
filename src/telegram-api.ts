@@ -112,8 +112,39 @@ export async function deleteMessage(
   return json.ok === true;
 }
 
+/** deleteMessage result with enough detail for self-clean decisions. */
+export interface DeleteResult {
+  ok: boolean;
+  /** Telegram says the message no longer exists (treat as deleted). */
+  notFound: boolean;
+  description?: string;
+}
+
 /**
- * Send a text message to a chat. Returns true on success.
+ * deleteMessage variant for the self-clean cron: distinguishes "already
+ * gone" (drop the tracking row) from a transient failure (retry later).
+ */
+export async function deleteMessageDetailed(
+  env: Env,
+  chatId: number,
+  messageId: number,
+): Promise<DeleteResult> {
+  const json = await callTelegram(env, 'deleteMessage', {
+    chat_id: chatId,
+    message_id: messageId,
+  });
+  return {
+    ok: json.ok === true,
+    notFound:
+      json.ok !== true &&
+      /message to delete not found/i.test(json.description ?? ''),
+    description: json.description,
+  };
+}
+
+/**
+ * Send a text message to a chat. Returns the new message_id on success
+ * (needed to track the message for self-clean) or null on failure.
  * replyTo is optional; when set the message is shown as a reply to that id.
  * parseMode is optional ('HTML' or 'Markdown'); pass it when the text
  * contains a mention built by buildUserMention.
@@ -124,7 +155,7 @@ export async function sendMessage(
   text: string,
   replyTo?: number,
   parseMode?: 'HTML' | 'Markdown',
-): Promise<boolean> {
+): Promise<number | null> {
   const params: Record<string, unknown> = { chat_id: chatId, text };
   if (replyTo !== undefined) params.reply_to_message_id = replyTo;
   if (parseMode) params.parse_mode = parseMode;
@@ -134,8 +165,11 @@ export async function sendMessage(
       `sendMessage failed for chat ${chatId}: ` +
         (json.description || `HTTP result ok=${json.ok}`),
     );
+    return null;
   }
-  return json.ok === true;
+  const id = (json.result as { message_id?: unknown } | undefined)
+    ?.message_id;
+  return typeof id === 'number' ? id : null;
 }
 
 /** Escape text for use inside Telegram HTML parse mode (the text of a tag). */

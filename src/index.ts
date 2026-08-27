@@ -7,7 +7,8 @@ import {
   isPolicyVideo,
 } from './telegram-api';
 import { moderateContent, resolveModel } from './llm-client';
-import { sendMessage } from './telegram-api';
+import { deleteMessageDetailed, sendMessage } from './telegram-api';
+import type { DeleteResult } from './telegram-api';
 import { makeLogger } from './logger';
 import { handleAdmin } from './admin';
 import type { Env, TelegramMessage, TelegramUpdate } from './types';
@@ -15,6 +16,12 @@ import type { Env, TelegramMessage, TelegramUpdate } from './types';
 /** Safe generic line used when ENABLE_FUNRESPONSE is on but the model
  * returned no usable fun_response. */
 const FUN_FALLBACK = 'Oops, that one got misplaced — carry on! 😄';
+
+/**
+ * Cron expression for the bot-message self-clean trigger. MUST match the
+ * corresponding entry in [triggers].crons in wrangler.toml.
+ */
+const CRON_BOT_CLEANUP = '*/10 * * * *';
 
 // 1x1 transparent PNG (67 bytes) used as the /favicon.ico response so
 // browser tab requests don't surface 405 errors in the dev console.
@@ -56,6 +63,164 @@ async function pruneExpiredAudit(env: Env): Promise<number> {
   } catch (err) {
     console.error(`audit prune failed: ${err}`);
     return 0;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Bot message self-clean                                              */
+/* ------------------------------------------------------------------ */
+
+/** Max bot_messages rows processed per cron tick (bounds API calls). */
+const CLEANUP_BATCH_SIZE = 25;
+/** Drop a tracking row after this many failed delete attempts. */
+const CLEANUP_MAX_ATTEMPTS = 5;
+/** Telegram refuses to delete messages older than ~48 hours. */
+const TELEGRAM_DELETE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+
+/** Shape of a row tracked for self-clean. */
+type BotMessageRow = {
+  id: number;
+  message_id: number;
+  chat_id: number;
+  chat_username: string | null;
+  message: string | null;
+  kind: string;
+  sent_at: string;
+  attempts: number;
+};
+
+/** Whether bot-message self-clean is on (ENABLE_SELF_CLEAN='true'). */
+function selfCleanEnabled(env: Env): boolean {
+  return (env.ENABLE_SELF_CLEAN || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * Track an outgoing bot message for later self-clean. No-op unless
+ * ENABLE_SELF_CLEAN is on and D1 is bound. Never throws: tracking failure
+ * must not break the moderation pipeline.
+ */
+async function recordBotMessage(
+  env: Env,
+  chatId: number,
+  messageId: number,
+  kind: string,
+  chatUsername: string | null,
+  message: string | null,
+): Promise<void> {
+  if (!env.DB || !selfCleanEnabled(env)) return;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO bot_messages
+         (message_id, chat_id, chat_username, message, kind, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        messageId,
+        chatId,
+        chatUsername,
+        message ? message.slice(0, 500) : null,
+        kind,
+        new Date().toISOString(),
+      )
+      .run();
+  } catch (err) {
+    console.error(`recordBotMessage failed: ${err}`);
+  }
+}
+
+async function dropBotMessageRow(env: Env, id: number): Promise<void> {
+  if (!env.DB) return;
+  try {
+    await env.DB.prepare('DELETE FROM bot_messages WHERE id = ?').bind(id).run();
+  } catch (err) {
+    console.error(`dropBotMessageRow failed: ${err}`);
+  }
+}
+
+/**
+ * Cron job: delete tracked bot messages whose TTL expired. Rows are dropped
+ * when the delete succeeds, when Telegram says the message is already gone,
+ * when the message outlived Telegram's ~48h delete window, or after
+ * CLEANUP_MAX_ATTEMPTS failed attempts (logged for debugging).
+ */
+async function cleanExpiredBotMessages(env: Env): Promise<void> {
+  if (!env.DB || !selfCleanEnabled(env)) return;
+  const logger = makeLogger(env);
+  const ttlMinutes = Number(env.SELF_CLEAN_TTL_MINUTES) || 60;
+  const now = Date.now();
+  const cutoff = new Date(now - ttlMinutes * 60_000).toISOString();
+
+  let rows: BotMessageRow[];
+  try {
+    const res = await env.DB.prepare(
+      `SELECT id, message_id, chat_id, chat_username, message, kind, sent_at, attempts
+       FROM bot_messages WHERE sent_at <= ? ORDER BY sent_at LIMIT ?`,
+    )
+      .bind(cutoff, CLEANUP_BATCH_SIZE)
+      .all<BotMessageRow>();
+    rows = res.results;
+  } catch (err) {
+    console.error(`bot-message cleanup query failed: ${err}`);
+    return;
+  }
+
+  for (const row of rows) {
+    // Older than Telegram's delete window: it can never be deleted.
+    if (now - Date.parse(row.sent_at) > TELEGRAM_DELETE_MAX_AGE_MS) {
+      await dropBotMessageRow(env, row.id);
+      await logger.debug('bot_message_cleanup_expired', {
+        chat_id: row.chat_id,
+        chat_username: row.chat_username,
+        extra: { messageId: row.message_id, kind: row.kind },
+      });
+      continue;
+    }
+
+    let del: DeleteResult;
+    try {
+      del = await deleteMessageDetailed(env, row.chat_id, row.message_id);
+    } catch (err) {
+      del = { ok: false, notFound: false, description: String(err) };
+    }
+
+    if (del.ok || del.notFound) {
+      await dropBotMessageRow(env, row.id);
+      await logger.info('bot_message_deleted', {
+        chat_id: row.chat_id,
+        chat_username: row.chat_username,
+        extra: {
+          messageId: row.message_id,
+          kind: row.kind,
+          alreadyGone: del.notFound,
+        },
+      });
+      continue;
+    }
+
+    const attempts = (row.attempts ?? 0) + 1;
+    if (attempts >= CLEANUP_MAX_ATTEMPTS) {
+      await dropBotMessageRow(env, row.id);
+      await logger.debug('bot_message_cleanup_failed', {
+        chat_id: row.chat_id,
+        chat_username: row.chat_username,
+        extra: {
+          messageId: row.message_id,
+          kind: row.kind,
+          attempts,
+          lastError: del.description ?? null,
+        },
+      });
+    } else {
+      try {
+        await env.DB.prepare(
+          'UPDATE bot_messages SET attempts = ? WHERE id = ?',
+        )
+          .bind(attempts, row.id)
+          .run();
+      } catch (err) {
+        console.error(`bot-message cleanup attempt update failed: ${err}`);
+      }
+    }
   }
 }
 
@@ -120,10 +285,16 @@ export default {
   },
 
   /**
-   * Cron handler for log rotation: prunes audit_log rows older than the
-   * configured retention. Wired to a Cloudflare cron trigger.
+   * Cron handler. Two triggers (see [triggers] in wrangler.toml):
+   *   - every 10 min: self-clean expired bot messages (ENABLE_SELF_CLEAN)
+   *   - daily 04:00 UTC: prune expired audit_log rows (LOG_RETENTION_DAYS)
+   * Unknown cron expressions fall back to the audit prune (safe default).
    */
-  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    if (event.cron === CRON_BOT_CLEANUP) {
+      await cleanExpiredBotMessages(env);
+      return;
+    }
     const removed = await pruneExpiredAudit(env);
     const logger = makeLogger(env);
     logger.info('audit_prune', {
@@ -279,7 +450,24 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
       // removed by the delete call, so passing msg.message_id here would
       // produce a "message to be replied not found" 400 from Telegram.
       if (deleted && funText) {
-        await sendMessage(env, msg.chat.id, funText, undefined, funParseMode);
+        const sentId = await sendMessage(
+          env,
+          msg.chat.id,
+          funText,
+          undefined,
+          funParseMode,
+        );
+        // Track the reply for self-clean (no-op unless ENABLE_SELF_CLEAN).
+        if (sentId !== null) {
+          await recordBotMessage(
+            env,
+            msg.chat.id,
+            sentId,
+            'fun',
+            msg.chat.username ?? null,
+            funText,
+          );
+        }
       }
     } else {
       await logger.info('safe', {

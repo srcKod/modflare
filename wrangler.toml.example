@@ -82,6 +82,15 @@ FUNRESPONSE_LANGUAGE = "Arabic"   # or "Spanish", "French", "German"...
 # "Levantine" for Arabic. Omitted -> no dialect hint is sent.
 FUNRESPONSE_DIALECT = "Gulf"      # or "Egyptian", "Levantine", "Standard"...
 
+# Self-clean: auto-delete the bot's own messages (e.g. fun replies) after a
+# TTL. When enabled, every outgoing bot message is tracked in the bot_messages
+# table (migration 0006) and deleted via Telegram once it is older than
+# SELF_CLEAN_TTL_MINUTES; the */10 cron trigger below does the work. Rows
+# that can never be deleted (already gone, older than Telegram's ~48h cap,
+# or 5 failed attempts) are dropped with a debug-level audit event.
+ENABLE_SELF_CLEAN = "false"
+SELF_CLEAN_TTL_MINUTES = "60"
+
 # Optional custom moderation system prompt. Omitted here -> a strict default
 # is used in code (see src/llm-client.ts).
 # MODERATION_PROMPT = "your custom prompt..."
@@ -114,12 +123,16 @@ database_id = "<D1-Database-ID>"
 database_name = "telegram-mod-bot-db"
 migrations_dir = "migrations"
 
-# daily prune of expired audit rows. NOTE: cron expressions are always UTC.
-# 04:00 UTC = 07:00 Asia/Baghdad (UTC+3) in winter. The prune is timezone-
-# agnostic (it just deletes rows older than LOG_RETENTION_DAYS), so any hour
-# works. Uncomment to enable.
-# [[triggers]]
-# crons = ["0 4 * * *"]
+# Cron triggers (expressions are always UTC). MUST stay in sync with
+# CRON_BOT_CLEANUP in src/index.ts:
+#   */10 * * * *  self-clean expired bot messages (ENABLE_SELF_CLEAN).
+#                 For high-traffic groups use "*/5 * * * *" (and update the
+#                 constant in src/index.ts to match).
+#   0 4 * * *     daily prune of expired audit rows (LOG_RETENTION_DAYS).
+#                 04:00 UTC = 07:00 Asia/Baghdad (UTC+3) in winter; the
+#                 prune itself is timezone-agnostic.
+[triggers]
+crons = ["*/10 * * * *", "0 4 * * *"]
 
 # ---------------------------------------------------------------------------
 # Module rules: admin panel static assets.

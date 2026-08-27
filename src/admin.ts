@@ -24,6 +24,7 @@ import APP_JS from './templates/js/app.js';
  *   GET  <path>/api/logs   -> JSON: filtered rows + count + page info
  *   GET  <path>/api/summary-> JSON: counts by level/decision matching filters
  *   GET  <path>/api/events -> JSON: distinct event values for the dropdown
+ *   GET  <path>/api/bot-queue -> JSON: pending bot_messages (self-clean queue)
  *   GET  <path>/export.csv -> same filters, downloaded as CSV
  *   GET  <path>/style.css  -> panel stylesheet (cookie-gated)
  *   GET  <path>/app.js     -> panel client script (cookie-gated)
@@ -85,6 +86,7 @@ export async function handleAdmin(
   if (rest === '/api/logs') return handleLogs(request, env);
   if (rest === '/api/summary') return handleSummary(request, env);
   if (rest === '/api/events') return handleEvents(env);
+  if (rest === '/api/bot-queue') return handleBotQueue(request, env);
   if (rest === '/export.csv') return handleExport(request, env);
 
   return json({ error: 'Not found' }, 404);
@@ -349,6 +351,43 @@ async function handleEvents(env: Env): Promise<Response> {
     'SELECT DISTINCT event FROM audit_log ORDER BY event',
   ).all();
   return json((res.results ?? []).map((r) => (r as { event: string }).event));
+}
+
+/**
+ * GET <path>/api/bot-queue?kind=fun
+ * Pending bot_messages rows (the self-clean queue) with per-row eligibility
+ * flags for the Bot queue tab. Read-only, like everything else here.
+ */
+async function handleBotQueue(request: Request, env: Env): Promise<Response> {
+  if (!env.DB) return json({ error: 'D1 not configured' }, 500);
+  const url = new URL(request.url);
+  const kind = (url.searchParams.get('kind') || '').trim();
+  const enabled = (env.ENABLE_SELF_CLEAN || '').trim().toLowerCase() === 'true';
+  const ttlMinutes = Number(env.SELF_CLEAN_TTL_MINUTES) || 60;
+  const cutoff = new Date(Date.now() - ttlMinutes * 60_000).toISOString();
+  try {
+    const stmt = env.DB.prepare(
+      `SELECT id, message_id, chat_id, chat_username, message, kind, sent_at, attempts
+       FROM bot_messages ${kind ? 'WHERE kind = ? ' : ''}ORDER BY sent_at LIMIT 200`,
+    );
+    const res = await (kind ? stmt.bind(kind) : stmt).all();
+    const rows = (res.results ?? []).map((r) => {
+      const row = r as {
+        id: number;
+        message_id: number;
+        chat_id: number;
+        chat_username: string | null;
+        message: string | null;
+        kind: string;
+        sent_at: string;
+        attempts: number;
+      };
+      return { ...row, eligible: row.sent_at <= cutoff };
+    });
+    return json({ enabled, ttl_minutes: ttlMinutes, rows });
+  } catch (err) {
+    return json({ error: `bot queue query failed: ${err}` }, 500);
+  }
 }
 
 async function handleExport(request: Request, env: Env): Promise<Response> {

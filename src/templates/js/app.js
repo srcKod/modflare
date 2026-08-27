@@ -266,4 +266,80 @@ document.querySelectorAll('th[data-k]').forEach(th=>{
 ['f-level','f-event','f-decision','f-chat','f-user','f-from','f-to','f-q'].forEach(id=>{
   document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')apply();});
 });
-loadEvents();loadStats();loadRows();
+
+/* ---- Bot queue tab ---- */
+/** Human-short age of an ISO timestamp: <1m / 42m / 3h 12m / 2d 5h. */
+function ageStr(iso){
+  const ms=Date.now()-Date.parse(iso);
+  if(isNaN(ms))return '—';
+  const m=Math.floor(ms/60000);
+  if(m<1)return '<1m';
+  if(m<60)return m+'m';
+  const h=Math.floor(m/60);
+  if(h<48)return h+'h '+(m%60)+'m';
+  return Math.floor(h/24)+'d '+(h%24)+'h';
+}
+async function loadQueue(){
+  const tbody=document.getElementById('bq-rows');
+  const notice=document.getElementById('bq-notice');
+  const kind=document.getElementById('bq-kind').value;
+  const p=new URLSearchParams();if(kind)p.set('kind',kind);
+  const r=await fetch(base+'/api/bot-queue?'+p);
+  if(!r.ok){tbody.innerHTML='<tr class="error"><td colspan="7">Failed to load ('+r.status+')</td></tr>';return;}
+  const d=await r.json();
+  if(d.enabled){notice.hidden=true;}
+  else{
+    notice.hidden=false;
+    notice.textContent='Self-clean is disabled (ENABLE_SELF_CLEAN) — messages below will not be auto-deleted.';
+  }
+  document.getElementById('bq-count').textContent=
+    d.rows.length+' pending · TTL '+d.ttl_minutes+'m';
+  if(!d.rows.length){
+    tbody.innerHTML='<tr class="empty"><td colspan="7">'+
+      (kind?'No "'+esc(kind)+'" messages awaiting cleanup.'
+           :'No bot messages awaiting cleanup.')+
+    '</td></tr>';
+    return;
+  }
+  tbody.innerHTML=d.rows.map(row=>{
+    return '<tr>'+
+      '<td class="mono">'+esc(row.message_id)+'</td>'+
+      '<td>'+idCell(row.chat_username,null,row.chat_id)+'</td>'+
+      '<td class="bq-msg"><div class="reason">'+esc(row.message)+'</div></td>'+
+      '<td><span class="badge bq-kind-'+esc(row.kind)+'">'+esc(row.kind)+'</span></td>'+
+      '<td class="mono">'+esc((row.sent_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+      '<td class="mono">'+ageStr(row.sent_at)+
+        (row.eligible?' <span class="badge due">due</span>':'')+'</td>'+
+      '<td class="mono">'+esc(row.attempts)+'</td>'+
+    '</tr>';
+  }).join('');
+}
+document.getElementById('bq-refresh').addEventListener('click',loadQueue);
+document.getElementById('bq-kind').addEventListener('change',loadQueue);
+
+/* ---- Tabs: audit (default) | bot-queue, deep-linked via ?tab= ---- */
+function currentTab(){
+  return new URLSearchParams(location.search).get('tab')==='bot-queue'
+    ?'bot-queue':'audit';
+}
+function showTab(t){
+  document.getElementById('tab-audit').hidden=(t!=='audit');
+  document.getElementById('tab-bot-queue').hidden=(t!=='bot-queue');
+  document.querySelectorAll('.tab').forEach(a=>{
+    a.classList.toggle('active',a.getAttribute('data-tab')===t);
+  });
+  if(t==='bot-queue'){loadQueue();}
+  else{loadStats();loadRows();}
+}
+document.querySelectorAll('.tab').forEach(a=>{
+  a.addEventListener('click',e=>{
+    e.preventDefault();
+    const t=a.getAttribute('data-tab');
+    const u=new URL(location.href);
+    if(t==='audit'){u.searchParams.delete('tab');}else{u.searchParams.set('tab',t);}
+    history.replaceState(null,'',u);
+    showTab(t);
+  });
+});
+loadEvents();
+showTab(currentTab());

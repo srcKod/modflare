@@ -1,10 +1,12 @@
 :root{--line:#e5e7eb;--bg:#fff;--muted:#6b7280}
 *{box-sizing:border-box}
-body{font-family:system-ui,sans-serif;margin:0;background:#f9fafb;color:#111827}
+/* Sticky footer: body is a full-height flex column so the footer sits at
+   the viewport bottom when content is short, and flows after it when long. */
+body{font-family:system-ui,sans-serif;margin:0;background:#f9fafb;color:#111827;display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}
 header{background:var(--bg);border-bottom:1px solid var(--line);padding:12px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 header h1{font-size:1.1rem;margin:0}
 header .spacer{flex:1}
-main{padding:20px;max-width:1400px;margin:0 auto}
+main{padding:20px;max-width:1400px;margin:0 auto;flex:1;width:100%}
 .stats{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px}
 .stat{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px 16px;min-width:120px}
 .stat .num{font-size:1.6rem;font-weight:600}
@@ -29,6 +31,28 @@ td .mono{font-family:ui-monospace,monospace;font-size:.75rem}
 .pagination button:disabled{opacity:.4;cursor:default}
 .pagination .info{color:var(--muted);font-size:.85rem}
 a.logout{color:#2563eb;text-decoration:none;font-size:.9rem}
+
+/* Tabs: Audit log | Bot queue */
+.tabs{display:flex;gap:4px;background:var(--bg);padding:0 20px;border-bottom:1px solid var(--line)}
+.tab{padding:10px 14px;font-size:.9rem;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent}
+.tab:hover{color:#111827}
+.tab.active{color:#2563eb;border-bottom-color:#2563eb;font-weight:600}
+
+/* Bot queue tab */
+.bq-table th{cursor:default}
+.badge.due{background:#fef3c7;color:#b45309}
+.badge.bq-kind-fun{background:#ecfdf5;color:#047857}
+.badge.bq-kind-default{background:#f3f4f6;color:#4b5563}
+.bq-msg .reason{
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;max-width:340px
+}
+.notice{background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:10px 14px;font-size:.85rem;margin-bottom:16px}
+
+/* Footer: small and muted, GitHub link pinned to the bottom-right. */
+.site-footer{display:flex;justify-content:flex-end;align-items:center;padding:12px 20px;border-top:1px solid var(--line);background:var(--bg);flex-shrink:0}
+.gh-link{color:var(--muted);display:inline-flex;align-items:center;text-decoration:none;line-height:0;padding:4px}
+.gh-link:hover{color:#111827}
 .empty{color:var(--muted);text-align:center;padding:40px 0}
 .error{color:#dc2626;text-align:center;padding:20px}
 
@@ -162,6 +186,7 @@ table{min-width:760px}
 /* Narrow screens: stack filters, shrink paddings, hide less-critical columns. */
 @media (max-width:720px){
   main{padding:12px}
+  .site-footer{padding:10px 12px}
   .filters input,.filters select{font-size:.8rem}
   .col-time,.col-level{width:auto}
   th,td{padding:6px 8px;font-size:.78rem}
