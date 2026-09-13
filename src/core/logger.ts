@@ -131,3 +131,24 @@ export function makeLogger(env: Env) {
 
 /** Type of the handle returned by makeLogger. */
 export type AuditLogger = ReturnType<typeof makeLogger>;
+
+
+/**
+ * Delete audit rows older than the configured retention (LOG_RETENTION_DAYS,
+ * default 30). Returns the number of deleted rows, or -1 if no DB is bound.
+ * Called by the daily prune cron; safe to call opportunistically.
+ */
+export async function pruneExpiredAudit(env: Env): Promise<number> {
+  if (!env.DB) return -1;
+  const days = Number(env.LOG_RETENTION_DAYS) || 30;
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    const res = await env.DB.prepare('DELETE FROM audit_log WHERE ts < ?')
+      .bind(cutoff)
+      .run();
+    return res.meta.changes ?? 0;
+  } catch (err) {
+    console.error(`audit prune failed: ${err}`);
+    return 0;
+  }
+}

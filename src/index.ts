@@ -4,7 +4,7 @@ import { extractMedia, isAdminUser, isPolicyVideo } from './features/moderation/
 import { moderateContent, resolveModel } from './llm-client';
 import { deleteMessageDetailed, sendMessage } from './core/telegram';
 import type { DeleteResult } from './core/telegram';
-import { makeLogger } from './logger';
+import { makeLogger, pruneExpiredAudit } from './core/logger';
 import { handleAdmin } from './admin';
 import type { Env, TelegramMessage, TelegramUpdate } from './core/types';
 
@@ -38,27 +38,6 @@ function faviconResponse(): Response {
       'Cache-Control': 'public, max-age=86400',
     },
   });
-}
-
-/**
- * Prune audit_log rows older than the configured retention (LOG_RETENTION_DAYS,
- * default 30 days). Returns the number of deleted rows, or -1 if no DB.
- */
-async function pruneExpiredAudit(env: Env): Promise<number> {
-  if (!env.DB) return -1;
-  const days = Number(env.LOG_RETENTION_DAYS) || 30;
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  try {
-    const res = await env.DB.prepare(
-      'DELETE FROM audit_log WHERE ts < ?',
-    )
-      .bind(cutoff)
-      .run();
-    return res.meta.changes ?? 0;
-  } catch (err) {
-    console.error(`audit prune failed: ${err}`);
-    return 0;
-  }
 }
 
 /* ------------------------------------------------------------------ */
