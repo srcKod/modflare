@@ -92,8 +92,10 @@ export async function moderateContent(
     (wantFun ? FUN_RESPONSE_ADDENDUM + `\n${langHint}` : '');
 
   // One user message whose content is either plain text or multimodal parts.
-  const parts: unknown[] = [];
-  if (text) parts.push(text);
+  // Parts must be well-shaped: the endpoint rejects bare strings inside a
+  // content array (AiError 3030), so text rides in a {type:'text'} part.
+  const parts: Record<string, unknown>[] = [];
+  if (text) parts.push({ type: 'text', text });
   else if (media.length === 0) {
     // Nothing to analyze — not actionable.
     return { flag: false, reason: 'empty message' };
