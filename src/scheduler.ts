@@ -1,3 +1,4 @@
+import { hourInTz, isHourInRange } from './core/time';
 import type { Env, TelegramMessage } from './types';
 
 /** Which messages should be sent to the LLM, driven by PROCESS_MODE. */
@@ -97,35 +98,6 @@ export function shouldProcess(
  * Setting START_HOUR = END_HOUR enables 24-hour moderation.
  */
 export function isActivePeriod(env: Env, now: Date = new Date()): boolean {
-  const start = env.START_HOUR;
-  const end = env.END_HOUR;
-
-  // Resolve the hour in the target timezone without carrying about the date.
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: env.TIMEZONE,
-    hour: 'numeric',
-    hourCycle: 'h23', // force 0-23
-  }).formatToParts(now);
-
-  const hourPart = parts.find((p) => p.type === 'hour');
-  const hour = hourPart ? Number(hourPart.value) : Number.NaN;
-  if (Number.isNaN(hour)) {
-    // Fall back to UTC hour if the timezone is invalid.
-    return isHourInRange(now.getUTCHours(), start, end);
-  }
-
-  return isHourInRange(hour, start, end);
+  return isHourInRange(hourInTz(env.TIMEZONE, now), env.START_HOUR, env.END_HOUR);
 }
 
-/** Range check with cross-midnight support. */
-function isHourInRange(hour: number, start: number, end: number): boolean {
-  if (start === end) {
-    // Same start and end = full 24-hour window.
-    return true;
-  }
-  if (start < end) {
-    return hour >= start && hour < end;
-  }
-  // Cross-midnight: e.g. start=22, end=6 -> active if hour>=22 || hour<6.
-  return hour >= start || hour < end;
-}
