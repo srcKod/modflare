@@ -6,7 +6,9 @@
  * caller (never thrown) so a Telegram hiccup can never break a pipeline.
  */
 
-import type { Env } from './types';
+import { envList } from './config';
+import { ADMIN_STATUSES } from './types';
+import type { Env, TelegramMessage } from './types';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
@@ -198,4 +200,57 @@ export function buildUserMention(from: {
   }
   if (from.first_name) return from.first_name;
   return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin identity (bot-wide config: ADMIN_USERNAMES / ADMIN_USER_IDS)   */
+/* ------------------------------------------------------------------ */
+
+/** Check whether a member is an admin / group creator via the API. */
+export async function isAdmin(
+  env: Env,
+  chatId: number,
+  userId: number,
+): Promise<boolean> {
+  const json = await callTelegram(env, 'getChatMember', {
+    chat_id: chatId,
+    user_id: userId,
+  });
+  const status = (json.result as { status?: string } | undefined)?.status;
+  return ADMIN_STATUSES.includes(status as (typeof ADMIN_STATUSES)[number]);
+}
+
+/** Parse ADMIN_USERNAMES into a set of lowercased usernames (optional '@'). */
+function configuredAdminSet(env: Env): Set<string> | null {
+  const list = envList(env.ADMIN_USERNAMES);
+  if (!list.length) return null;
+  return new Set(list.map((name) => name.replace(/^@/, '').toLowerCase()));
+}
+
+/**
+ * Decide whether a message sender is a configured admin.
+ *
+ * Local match against ADMIN_USERNAMES/ADMIN_USER_IDS when either is set
+ * (no network call); otherwise falls back to the getChatMember API lookup.
+ */
+export async function isAdminUser(
+  env: Env,
+  msg: Pick<TelegramMessage, 'from' | 'chat'>,
+): Promise<boolean> {
+  if (!msg.from) return false;
+
+  const configured = configuredAdminSet(env);
+  const idList = envList(env.ADMIN_USER_IDS);
+  if (!configured && !idList.length) {
+    // Neither list configured -> fall back to the API.
+    return isAdmin(env, msg.chat.id, msg.from.id);
+  }
+
+  const username = msg.from.username?.toLowerCase();
+  if (configured && username && configured.has(username)) return true;
+  if (idList.length) {
+    const id = Number(msg.from.id);
+    if (Number.isInteger(id) && id > 0 && idList.includes(String(id))) return true;
+  }
+  return false;
 }

@@ -1,69 +1,13 @@
 /**
- * Moderation policy helpers: admin detection/exemption, the product-hosted
- * video policy, and media extraction. Pure decisions over Telegram payloads —
- * the transport lives in core/telegram.ts, the pipeline that acts on these
- * decisions lives in features/moderation/index.ts.
+ * Moderation policy: the product-hosted video policy and media extraction.
+ * Pure decisions over Telegram payloads — the transport lives in
+ * core/telegram.ts (which also owns admin identity checks), the pipeline
+ * that acts on these decisions lives in features/moderation/index.ts.
  */
 
-import { envList } from '../../core/config';
-import { callTelegram, getFileDataUrl } from '../../core/telegram';
-import { ADMIN_STATUSES } from '../../core/types';
+import { getFileDataUrl } from '../../core/telegram';
 import type { Env, TelegramMessage } from '../../core/types';
 import type { MediaPart } from './types';
-
-/** Check whether a member is an admin / group creator via the API. */
-export async function isAdmin(
-  env: Env,
-  chatId: number,
-  userId: number,
-): Promise<boolean> {
-  const json = await callTelegram(env, 'getChatMember', {
-    chat_id: chatId,
-    user_id: userId,
-  });
-  const status = (json.result as { status?: string } | undefined)?.status;
-  return ADMIN_STATUSES.includes(status as (typeof ADMIN_STATUSES)[number]);
-}
-
-/**
- * Parse ADMIN_USERNAMES into a set of lowercased usernames (optional leading
- * '@', comma/space separators).
- */
-function configuredAdminSet(env: Env): Set<string> | null {
-  const list = envList(env.ADMIN_USERNAMES);
-  if (!list.length) return null;
-  return new Set(list.map((name) => name.replace(/^@/, '').toLowerCase()));
-}
-
-/**
- * Decide whether a message sender is exempt as an admin.
- *
- * When ADMIN_USERNAMES is configured, the decision is made locally from the
- * sender's username (no network call). Otherwise it falls back to the
- * getChatMember API lookup.
- */
-export async function isAdminUser(
-  env: Env,
-  msg: Pick<TelegramMessage, 'from' | 'chat'>,
-): Promise<boolean> {
-  if (!msg.from) return false;
-
-  const configured = configuredAdminSet(env);
-  const idList = envList(env.ADMIN_USER_IDS);
-  if (!configured && !idList.length) {
-    // Neither username list nor ID list configured -> fall back to the API.
-    return isAdmin(env, msg.chat.id, msg.from.id);
-  }
-
-  // Local matching: username in ADMIN_USERNAMES, or id in ADMIN_USER_IDS.
-  const username = msg.from.username?.toLowerCase();
-  if (configured && username && configured.has(username)) return true;
-  if (idList.length) {
-    const id = Number(msg.from.id);
-    if (Number.isInteger(id) && id > 0 && idList.includes(String(id))) return true;
-  }
-  return false;
-}
 
 /**
  * True when a message carries a product-hosted video that must be deleted
