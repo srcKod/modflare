@@ -1,3 +1,14 @@
+/**
+ * Moderation LLM usage: prompt assembly, routing (multimodal vs text-only
+ * model), and tolerant response parsing. The transport is core/llm.ts —
+ * this module only decides WHAT to ask and HOW to read the answer.
+ *
+ * Failure policy: fail-open. Any LLM/network/parse error yields
+ * `{ flag: false }` so moderation never deletes on a mistake.
+ */
+
+import { chatCompletion } from './core/llm';
+import type { LlmProfile } from './core/llm';
 import type { Env } from './core/types';
 import type {
   JsonModerationReply,
@@ -33,14 +44,6 @@ requested dialect if one is given (e.g. a specific Arabic dialect). Must not
 blame them for the removed content. Return an empty string when flag is false.`;
 
 /**
- * OpenAI-compatible content part types used in multimodal requests.
- * Types are intentionally loose so they pass through to any provider.
- */
-type ContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } };
-
-/**
  * Resolve the model that will handle a moderation request: media (image
  * parts) go to the multimodal MODEL_NAME; plain text goes to the cheap,
  * fast TEXT_MODEL, falling back to MODEL_NAME when TEXT_MODEL is unset.
@@ -51,12 +54,27 @@ export function resolveModel(env: Env, hasMedia: boolean): string {
   return hasMedia ? env.MODEL_NAME : env.TEXT_MODEL || env.MODEL_NAME;
 }
 
+/** Build the moderation profile: routing + knobs live in env, not code. */
+function moderationProfile(env: Env, isImage: boolean): LlmProfile {
+  return {
+    baseUrl: env.OPENAI_BASE_URL.replace(/\/+$/, ''),
+    apiKey: env.OPENAI_API_KEY,
+    model: resolveModel(env, isImage),
+    maxTokens: Number(env.LLM_MAX_TOKENS) || 2048,
+    timeoutMs: Number(env.LLM_TIMEOUT_MS) || 60000,
+    temperature: 0,
+    jsonMode: env.LLM_RESPONSE_FORMAT === 'json',
+    // Image path uses LLM_EXTRA_BODY_JSON; text path prefers its own override.
+    extraBody: isImage
+      ? env.LLM_EXTRA_BODY_JSON
+      : env.TEXT_EXTRA_BODY_JSON || env.LLM_EXTRA_BODY_JSON,
+  };
+}
+
 /**
- * Send text + media to an OpenAI-compatible chat completions endpoint and ask
- * it to decide whether the content should be flagged/removed.
- *
- * Fails OPEN by default: on any error or malformed response we return
- * { flag: false } so the moderation logic never deletes a message by mistake.
+ * Send text + media to the configured endpoint and decide whether the
+ * content should be flagged/removed. Fails OPEN: on any error or malformed
+ * response we return `{ flag: false }` so a message is never deleted by mistake.
  */
 export async function moderateContent(
   env: Env,
@@ -66,21 +84,17 @@ export async function moderateContent(
   const wantFun = isFunResponseEnabled(env);
   const language = env.FUNRESPONSE_LANGUAGE?.trim() || 'English';
   const dialect = env.FUNRESPONSE_DIALECT?.trim();
-  const langHint =
-    dialect
-      ? `Language: ${language} (dialect: ${dialect})`
-      : `Language: ${language}`;
+  const langHint = dialect
+    ? `Language: ${language} (dialect: ${dialect})`
+    : `Language: ${language}`;
   const prompt =
     (env.MODERATION_PROMPT?.trim() || DEFAULT_PROMPT) +
     (wantFun ? FUN_RESPONSE_ADDENDUM + `\n${langHint}` : '');
-  const timeoutMs = Number(env.LLM_TIMEOUT_MS) || 60000;
-  const maxTokens = Number(env.LLM_MAX_TOKENS) || 2048;
 
-  const content: ContentPart[] = [];
-
-  if (text) {
-    content.push({ type: 'text', text });
-  } else if (media.length === 0) {
+  // One user message whose content is either plain text or multimodal parts.
+  const parts: unknown[] = [];
+  if (text) parts.push(text);
+  else if (media.length === 0) {
     // Nothing to analyze — not actionable.
     return { flag: false, reason: 'empty message' };
   }
@@ -89,123 +103,24 @@ export async function moderateContent(
   // by policy before this). All are pre-downloaded as base64 data URLs so the
   // model never sees a public URL (no token leak, no URL-domain allowlist).
   for (const part of media) {
-    content.push({ type: 'image_url', image_url: { url: part.dataUrl } });
+    parts.push({ type: 'image_url', image_url: { url: part.dataUrl } });
   }
 
-  // Route by content: images (media present) use the multimodal MODEL_NAME;
-  // plain text (the common spam/link case) can fall back to a cheap, fast
-  // text-only TEXT_MODEL. Keeps the routing inside the worker from the data
-  // it already has — no client-supplied flag, no gateway dynamic route.
-  // Falls back to MODEL_NAME for both when TEXT_MODEL is unset.
   const isImage = media.length > 0;
-  const model = resolveModel(env, isImage);
-
-  const body: Record<string, unknown> = {
-    model,
-    messages: [
-      { role: 'system', content: prompt },
-      { role: 'user', content },
-    ],
-    temperature: 0,
-    stream: false,
-    max_tokens: maxTokens,
-  };
-
-  // Opt-in structured output. Off by default: not every OpenAI-compatible
-  // endpoint accepts `response_format` (some return 400), and parseModeration
-  // already tolerates JSON inside code fences / prose. Set LLM_RESPONSE_FORMAT
-  // to "json" only when the configured model supports strict JSON output.
-  if (env.LLM_RESPONSE_FORMAT === 'json') {
-    body.response_format = { type: 'json_object' };
+  const llm = await chatCompletion(moderationProfile(env, isImage), [
+    { role: 'system', content: prompt },
+    { role: 'user', content: parts },
+  ]);
+  if (!llm.ok) {
+    // Normalize transport errors onto the audit reasons callers know.
+    const reason = llm.error.startsWith('llm_error:')
+      ? llm.error
+      : llm.error === 'llm_timeout'
+        ? 'llm_timeout'
+        : 'llm_error';
+    return { flag: false, reason, llmResponse: '' };
   }
-
-  // Generic provider/model escape hatch: merge arbitrary JSON into the request
-  // body. Lets you send the correct thinking-toggle param for whatever model is
-  // configured. The image path (MODEL_NAME) uses LLM_EXTRA_BODY_JSON; the text
-  // path (TEXT_MODEL) uses TEXT_EXTRA_BODY_JSON and falls back to the shared
-  // LLM_EXTRA_BODY_JSON when unset — so both models get reasoning handled out
-  // of the box, and each can be overridden independently later.
-  // Examples: {"thinking":{"type":"disabled"}} for Z.ai GLM,
-  // {"enable_thinking":false} for Qwen3, {"reasoning_effort":"none"} for
-  // OpenAI. Invalid JSON is logged and ignored so moderation never breaks.
-  const extraBodyJson = isImage
-    ? env.LLM_EXTRA_BODY_JSON
-    : env.TEXT_EXTRA_BODY_JSON || env.LLM_EXTRA_BODY_JSON;
-  if (extraBodyJson?.trim()) {
-    try {
-      const extra = JSON.parse(extraBodyJson);
-      if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
-        Object.assign(body, extra);
-      } else {
-        console.error(
-          `${isImage ? 'LLM_EXTRA_BODY_JSON' : 'TEXT_EXTRA_BODY_JSON'} must be a JSON object; ignoring`,
-        );
-      }
-    } catch (err) {
-      console.error(
-        `${isImage ? 'LLM_EXTRA_BODY_JSON' : 'TEXT_EXTRA_BODY_JSON'} invalid JSON: ${String(err)}`,
-      );
-    }
-  }
-
-  const endpoint = `${env.OPENAI_BASE_URL.replace(/\/+$/, '')}/chat/completions`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const init = {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-        'Cache-Control': 'no-store',
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    };
-    const res = await fetch(endpoint, init);
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.error(
-        `LLM returned ${res.status}: ${res.statusText} ${errText.slice(0, 300)}`,
-      );
-      return { flag: false, reason: `llm_error:${res.status}` };
-    }
-
-    // Non-streaming (stream:false) — plain JSON chat/completions response.
-    // This is the most widely supported OpenAI-compatible shape; when the
-    // provider includes a reasoning/thinking phase, the final `content` still
-    // arrives here once the answer is produced.
-    let content = '';
-    try {
-      const json = (await res.json()) as {
-        choices?: { message?: { content?: string | null } }[];
-      };
-      content = json.choices?.[0]?.message?.content ?? '';
-    } catch (jsonErr) {
-      const text = await res.text().catch(() => '');
-      console.error(`LLM non-json response: ${text.slice(0, 300)}`);
-      return { flag: false, reason: 'llm_error', llmResponse: text };
-    }
-
-    if (!content) {
-      console.error('LLM returned 200 with empty content');
-    }
-    return parseModeration(content, content);
-  } catch (err) {
-    const name = err instanceof Error ? err.name : '';
-    const timedOut = name === 'AbortError';
-    console.error(`LLM call failed${timedOut ? ' (timeout)' : ''}: ${err}`);
-    return {
-      flag: false,
-      reason: timedOut ? 'llm_timeout' : 'llm_error',
-      llmResponse: '',
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  return parseModeration(llm.raw, llm.raw);
 }
 
 /**
