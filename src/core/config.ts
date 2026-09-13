@@ -29,6 +29,8 @@ export function envBool(value: string | undefined, dflt: boolean): boolean {
 
 /** Integer env var with fallback when missing or non-numeric. */
 export function envInt(value: string | undefined, dflt: number): number {
-  const n = Number((value ?? '').trim());
+  const t = (value ?? '').trim();
+  if (t === '') return dflt; // an empty var is a missing var, not zero
+  const n = Number(t);
   return Number.isFinite(n) ? n : dflt;
 }

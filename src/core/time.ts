@@ -8,13 +8,18 @@
 
 /** Resolve the 0-23 hour of `now` in `timeZone`. Falls back to UTC on bad tz. */
 export function hourInTz(timeZone: string, now: Date = new Date()): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour: 'numeric',
-    hourCycle: 'h23',
-  }).formatToParts(now);
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value);
-  return Number.isNaN(hour) ? now.getUTCHours() : hour;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: 'numeric',
+      hourCycle: 'h23',
+    }).formatToParts(now);
+    const hour = Number(parts.find((p) => p.type === 'hour')?.value);
+    return Number.isNaN(hour) ? now.getUTCHours() : hour;
+  } catch {
+    // Invalid timezone identifier — Intl throws; degrade to UTC.
+    return now.getUTCHours();
+  }
 }
 
 /**
