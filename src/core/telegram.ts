@@ -2,7 +2,7 @@
  * Core Telegram Bot API client — pure transport, zero policy.
  *
  * Every module talks to Telegram through these helpers; nothing here knows
- * about moderation, digests, or any other feature. Errors are returned to the
+ * about any feature calling it. Errors are returned to the
  * caller (never thrown) so a Telegram hiccup can never break a pipeline.
  */
 
