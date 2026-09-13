@@ -7,14 +7,14 @@
  * `{ flag: false }` so moderation never deletes on a mistake.
  */
 
-import { chatCompletion } from './core/llm';
-import type { LlmProfile } from './core/llm';
-import type { Env } from './core/types';
+import { chatCompletion } from '../../core/llm';
+import type { LlmProfile } from '../../core/llm';
+import type { Env } from '../../core/types';
 import type {
   JsonModerationReply,
   MediaPart,
   ModerationResult,
-} from './features/moderation/types';
+} from './types';
 
 /** Enable/disable check for the funny response (ENABLE_FUNRESPONSE). */
 function isFunResponseEnabled(env: Env): boolean {

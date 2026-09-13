@@ -1,5 +1,5 @@
-import { hourInTz, isHourInRange } from './core/time';
-import type { Env, TelegramMessage } from './core/types';
+import { hourInTz, isHourInRange } from '../../core/time';
+import type { Env, TelegramMessage } from '../../core/types';
 
 /** Which messages should be sent to the LLM, driven by PROCESS_MODE. */
 export type ProcessMode =
