@@ -1,9 +1,9 @@
+import type { Env } from './core/types';
 import type {
-  Env,
   JsonModerationReply,
   MediaPart,
   ModerationResult,
-} from './types';
+} from './features/moderation/types';
 
 /** Enable/disable check for the funny response (ENABLE_FUNRESPONSE). */
 function isFunResponseEnabled(env: Env): boolean {

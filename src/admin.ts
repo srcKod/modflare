@@ -1,4 +1,4 @@
-import type { Env } from './types';
+import type { Env } from './core/types';
 import LOGIN_HTML from './templates/login.html';
 import PANEL_HTML from './templates/admin.html';
 import STYLE_CSS from './templates/css/style.css';

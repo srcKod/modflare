@@ -1,17 +1,12 @@
 import { isActivePeriod, shouldProcess } from './scheduler';
-import {
-  buildUserMention,
-  deleteMessage,
-  extractMedia,
-  isAdminUser,
-  isPolicyVideo,
-} from './telegram-api';
+import { buildUserMention, deleteMessage } from './core/telegram';
+import { extractMedia, isAdminUser, isPolicyVideo } from './features/moderation/policy';
 import { moderateContent, resolveModel } from './llm-client';
-import { deleteMessageDetailed, sendMessage } from './telegram-api';
-import type { DeleteResult } from './telegram-api';
+import { deleteMessageDetailed, sendMessage } from './core/telegram';
+import type { DeleteResult } from './core/telegram';
 import { makeLogger } from './logger';
 import { handleAdmin } from './admin';
-import type { Env, TelegramMessage, TelegramUpdate } from './types';
+import type { Env, TelegramMessage, TelegramUpdate } from './core/types';
 
 /** Safe generic line used when ENABLE_FUNRESPONSE is on but the model
  * returned no usable fun_response. */
@@ -488,14 +483,8 @@ async function handleUpdate(env: Env, update: TelegramUpdate): Promise<void> {
 }
 
 // Re-export for potential use by scripts/tests.
-export {
-  deleteMessage,
-  extractMedia,
-  isAdminUser,
-  isPolicyVideo,
-  moderateContent,
-  resolveModel,
-  isActivePeriod,
-};
+export { isActivePeriod } from './scheduler';
+export { moderateContent, resolveModel } from './llm-client';
+export { deleteMessage } from './core/telegram';
 export { shouldProcess } from './scheduler';
-export { getFileDataUrl } from './telegram-api';
+export { getFileDataUrl } from './core/telegram';
