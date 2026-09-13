@@ -1,4 +1,4 @@
-import type { Env } from './core/types';
+import type { Env } from './types';
 
 /** Log levels in ascending severity order. */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
