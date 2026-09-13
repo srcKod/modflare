@@ -2,7 +2,7 @@
  * Core Telegram Bot API client — pure transport, zero policy.
  *
  * Every module talks to Telegram through these helpers; nothing here knows
- * about any feature calling it. Errors are returned to the
+ * about any feature that calls it. Errors are returned to the
  * caller (never thrown) so a Telegram hiccup can never break a pipeline.
  */
 
@@ -254,3 +254,124 @@ export async function isAdminUser(
   }
   return false;
 }
+/* Rich sending: chunked HTML posts, member count, admin DMs            */
+/* ------------------------------------------------------------------ */
+
+/** Telegram hard cap on a single message (post-parse). */
+export const TG_TEXT_LIMIT = 4096;
+
+/** Result of a detailed send: first-chunk message_id + overall status. */
+export interface SendResult {
+  ok: boolean;
+  messageId?: number;
+  description?: string;
+}
+
+/**
+ * Split a text into chunks of at most `limit` characters, preferring line
+ * boundaries so HTML entity blocks (item bullets) are not cut mid-tag.
+ * If a single line exceeds the limit it is hard-split. Returns ≥1 chunk.
+ */
+export function chunkText(text: string, limit = TG_TEXT_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n', limit);
+    if (cut < limit * 0.5) cut = limit; // no good line boundary — hard cut
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^\n+/, '');
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * sendMessage variant for the digest: HTML parse mode, optional link-preview
+ * suppression, automatic 4096-char chunking (multi-part posts get a "k/n"
+ * marker on continuation chunks), and one retry honoring Telegram's 429
+ * retry_after. Returns the message_id of the FIRST chunk (the canonical
+ * post used for analytics) plus overall ok.
+ */
+export async function sendMessageDetailed(
+  env: Env,
+  chatId: number | string,
+  text: string,
+  opts: { parseMode?: 'HTML'; disablePreview?: boolean } = {},
+): Promise<SendResult> {
+  const chunks = chunkText(text);
+  let firstId: number | undefined;
+  for (let i = 0; i < chunks.length; i++) {
+    const suffix =
+      chunks.length > 1 ? `\n\n<i>[${i + 1}/${chunks.length}]</i>` : '';
+    const params: Record<string, unknown> = {
+      chat_id: chatId,
+      text: chunks[i] + suffix,
+    };
+    if (opts.parseMode) params.parse_mode = opts.parseMode;
+    if (opts.disablePreview) {
+      params.link_preview_options = { is_disabled: true };
+    }
+    let json = await callTelegram(env, 'sendMessage', params);
+    // One polite retry on flood-wait.
+    if (!json.ok && /retry after (\d+)/i.test(json.description ?? '')) {
+      const after = Number(/retry after (\d+)/i.exec(json.description ?? '')?.[1]);
+      if (Number.isFinite(after) && after <= 30) {
+        await sleep((after + 1) * 1000);
+        json = await callTelegram(env, 'sendMessage', params);
+      }
+    }
+    if (!json.ok) {
+      return {
+        ok: false,
+        messageId: firstId,
+        description: json.description,
+      };
+    }
+    if (firstId === undefined) {
+      const id = (json.result as { message_id?: unknown } | undefined)
+        ?.message_id;
+      if (typeof id === 'number') firstId = id;
+    }
+  }
+  return { ok: true, messageId: firstId };
+}
+
+/** Current member count of a chat (channels/groups). Null on failure. */
+export async function getChatMemberCount(
+  env: Env,
+  chatId: number | string,
+): Promise<number | null> {
+  const json = await callTelegram(env, 'getChatMemberCount', { chat_id: chatId });
+  return typeof json.result === 'number' ? json.result : null;
+}
+
+/**
+ * DM every numeric id in ADMIN_USER_IDS. Bots can only reach users who have
+ * started the bot, so failures are expected and returned (not thrown) —
+ * the caller logs them at debug level.
+ */
+export async function notifyAdmins(
+  env: Env,
+  text: string,
+): Promise<{ sent: number; failed: number }> {
+  const ids = (env.ADMIN_USER_IDS ?? '')
+    .split(/[,\s]+/)
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  let sent = 0;
+  let failed = 0;
+  for (const id of ids) {
+    const r = await sendMessageDetailed(env, id, text, {
+      disablePreview: true,
+    });
+    if (r.ok) sent++;
+    else failed++;
+  }
+  return { sent, failed };
+}
+

@@ -318,7 +318,31 @@ document.getElementById('bq-refresh').addEventListener('click',loadQueue);
 document.getElementById('bq-kind').addEventListener('change',loadQueue);
 
 /* ---- Settings tab: runtime config overrides (generated from defs) ---- */
-async function apiPost(url,payload){
+/* ---- Digest tab: runs list, draft editor, publish/discard, stats ---- */
+let dgCurrent=null;   // full row loaded into the editor
+const DG_TAGS=['b','i','u','s','a','code','blockquote'];
+/** Render the Telegram-HTML subset safely for the preview pane. */
+function renderTgHtml(src){
+  let s=esc(src);
+  // Only the allowlisted tags survive; everything else stays escaped text.
+  s=s.replace(/&lt;(\/?)(b|i|u|s|blockquote|code|strong|em)&gt;/g,(m,sl,tag)=>{
+    const map={strong:'b',em:'i'};
+    return '<'+sl+(map[tag]||tag)+'>';
+  });
+  s=s.replace(/&lt;a href=&quot;(.*?)&quot;&gt;/g,(m,url)=>{
+    const u=url.replace(/&amp;/g,'&');
+    return '<a href="'+u+'" target="_blank" rel="noopener">';
+  });
+  s=s.replace(/&lt;(\/?)a&gt;/g,'<$1a>');
+  return s;
+}
+function typeBadge(t){return '<span class="badge dg-type-'+esc(t||'daily')+'">'+esc(t||'daily')+'</span>';}
+function statusBadge(st){
+  const cls={published:'keep',draft:'info',failed:'error',discarded:'debug'}[st]||'debug';
+  return badge(cls,st);
+}
+// Shared POST helper for the digest + settings APIs (single definition).
+async function dgPost(url,payload){
   return fetch(base+url,{
     method:'POST',
     headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},
@@ -384,16 +408,164 @@ document.getElementById('st-refresh').addEventListener('click',loadSettings);
 /* ---- Tabs: audit (default) | bot-queue | settings, deep-linked via ?tab= ---- */
 function currentTab(){
   const t=new URLSearchParams(location.search).get('tab');
-  return t==='bot-queue'||t==='settings'?t:'audit';
+  return t==='bot-queue'||t==='settings'||t==='digest'?t:'audit';
 }
+async function loadDigest(){
+  const notice=document.getElementById('dg-notice');
+  const r=await fetch(base+'/api/digest/drafts');
+  if(!r.ok){notice.hidden=false;notice.textContent='Digest API failed ('+r.status+').';return;}
+  const d=await r.json();
+  if(!d.enabled){notice.hidden=false;notice.textContent='Digest is disabled (ENABLE_NEWS_DIGEST != "true").';}
+  else if(d.auto_publish){notice.hidden=false;notice.textContent='Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.';}
+  else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
+  const drafts=(d.rows||[]).filter(x=>x.status==='draft');
+  const others=(d.rows||[]).filter(x=>x.status!=='draft');
+  const tbody=document.getElementById('dg-drafts');
+  if(!drafts.length){tbody.innerHTML='<tr class="empty"><td colspan="7">No pending drafts.</td></tr>';}
+  else{
+    tbody.innerHTML=drafts.map(row=>'<tr>'+
+      '<td class="mono">'+esc(row.slot_key)+'</td>'+
+      '<td>'+typeBadge(row.type)+'</td>'+
+      '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
+      '<td><div class="reason">'+esc(row.preview||'')+'</div></td>'+
+      '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+      '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
+      '<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>'+
+    '</tr>').join('');
+    tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));
+  }
+  // Published + stats via /api/digest/stats
+  const sr=await fetch(base+'/api/digest/stats');
+  const spub=document.getElementById('dg-published');
+  const sstat=document.getElementById('dg-stats');
+  if(!sr.ok){spub.innerHTML='<tr class="error"><td colspan="6">Stats failed</td></tr>';return;}
+  const st=await sr.json();
+  const tot=(st.posts||[]).reduce((a,p)=>a+(p.reactions||0),0);
+  const best=(st.posts||[]).reduce((a,p)=>(p.reactions||0)>(a?.reactions||0)?p:a,null);
+  sstat.innerHTML=
+    '<div class="stat"><div class="num">'+(st.posts||[]).length+'</div><div class="lbl">Published</div></div>'+
+    '<div class="stat"><div class="num">'+drafts.length+'</div><div class="lbl">Pending drafts</div></div>'+
+    '<div class="stat"><div class="num">'+tot+'</div><div class="lbl">Total reactions</div></div>'+
+    '<div class="stat"><div class="num">'+(best?esc(best.reactions):'—')+'</div><div class="lbl">Best post</div></div>';
+  spub.innerHTML=(st.posts||[]).length?st.posts.map(p=>{
+    let rl='';
+    try{const j=JSON.parse(p.reactions_json||'{}');
+      rl=Object.entries(j).sort((a,b)=>b[1]-a[1]).slice(0,3)
+        .map(([e,c])=>esc(e)+' '+c).join(' · ');
+    }catch{}
+    return '<tr>'+
+      '<td><div class="primary">'+esc(p.title||'—')+'</div></td>'+
+      '<td>'+typeBadge(p.type)+'</td>'+
+      '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+      '<td class="mono">'+(p.reactions!=null?esc(p.reactions):'—')+(rl?'<div class="secondary">'+rl+'</div>':'')+'</td>'+
+      '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
+      '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
+    '</tr>';
+  }).join(''):'<tr class="empty"><td colspan="6">Nothing published yet.</td></tr>';
+  // Settings
+  const setr=await fetch(base+'/api/digest/settings');
+  if(setr.ok){
+    document.getElementById('dg-settings').textContent=JSON.stringify(await setr.json(),null,2);
+  }
+}
+/* Editor */
+async function openEditor(id){
+  const r=await fetch(base+'/api/digest/drafts/'+id);
+  if(!r.ok){alert('Failed to load draft '+id);return;}
+  dgCurrent=await r.json();
+  document.getElementById('dg-editor').hidden=false;
+  document.getElementById('dg-editor-title').textContent=dgCurrent.title||'(untitled)';
+  document.getElementById('dg-editor-meta').textContent=
+    dgCurrent.slot_key+' · '+dgCurrent.type+' · '+dgCurrent.mode+' · '+(dgCurrent.model||'');
+  document.getElementById('dg-body').value=dgCurrent.body||'';
+  document.getElementById('dg-editor-status').textContent='';
+  updateCount();updatePreview();
+  document.getElementById('dg-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function closeEditor(){
+  document.getElementById('dg-editor').hidden=true;dgCurrent=null;
+}
+function updateCount(){
+  const v=document.getElementById('dg-body').value;
+  document.getElementById('dg-count').textContent=
+    v.length+' chars raw'+(v.length>4096?' — WILL be split into parts':'');
+}
+function updatePreview(){
+  document.getElementById('dg-preview').innerHTML=renderTgHtml(document.getElementById('dg-body').value);
+}
+document.getElementById('dg-body').addEventListener('input',()=>{updateCount();updatePreview();});
+document.querySelectorAll('.dg-toolbar button').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const ta=document.getElementById('dg-body');
+    const tag=b.getAttribute('data-wrap');
+    const {selectionStart:s,selectionEnd:e,value:v}=ta;
+    const sel=v.slice(s,e);
+    let ins;
+    if(tag==='a'){
+      const url=sel&&/^(https?:\/\/|tg:\/\/)/i.test(sel.trim())?sel.trim():window.prompt('Link URL (https:// or tg://)','https://');
+      if(!url)return;
+      const label=sel&&sel.trim()!==url?sel:url.replace(/^https?:\/\//,'');
+      ins='<a href="'+url+'">'+label+'</a>';
+    }else{
+      ins='<'+tag+'>'+sel+'</'+tag+'>';
+    }
+    ta.value=v.slice(0,s)+ins+v.slice(e);
+    ta.focus();ta.setSelectionRange(s+ins.length,s+ins.length);
+    updateCount();updatePreview();
+  });
+});
+document.getElementById('dg-save').addEventListener('click',async()=>{
+  if(!dgCurrent)return;
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
+  const st=document.getElementById('dg-editor-status');
+  st.textContent=r.ok?'Saved ✓':'Save failed ('+r.status+')';
+  if(r.ok)document.getElementById('dg-editor-meta').textContent=dgCurrent.slot_key+' · '+dgCurrent.type+' · '+dgCurrent.mode+' · '+(dgCurrent.model||'')+' · saved';
+});
+document.getElementById('dg-restore').addEventListener('click',()=>{
+  if(dgCurrent&&dgCurrent.body_original!=null){
+    document.getElementById('dg-body').value=dgCurrent.body_original;
+    updateCount();updatePreview();
+    document.getElementById('dg-editor-status').textContent='Restored original (not saved yet)';
+  }
+});
+document.getElementById('dg-publish').addEventListener('click',async()=>{
+  if(!dgCurrent)return;
+  if(!window.confirm('Publish this digest to '+(dgCurrent.target_chat_id||'the channel')+'?'))return;
+  const sr=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
+  if(!sr.ok){document.getElementById('dg-editor-status').textContent='Save failed before publish';return;}
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/publish');
+  const st=document.getElementById('dg-editor-status');
+  const d=await r.json().catch(()=>({}));
+  st.textContent=r.ok?'Published ✓ (message '+d.message_id+')':'Publish failed: '+(d.error||r.status);
+  if(r.ok){closeEditor();loadDigest();}
+});
+document.getElementById('dg-discard').addEventListener('click',async()=>{
+  if(!dgCurrent||!window.confirm('Discard this draft?'))return;
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/discard');
+  if(r.ok){closeEditor();loadDigest();}
+});
+document.getElementById('dg-close').addEventListener('click',closeEditor);
+document.getElementById('dg-refresh').addEventListener('click',loadDigest);
+document.getElementById('dg-run').addEventListener('click',async()=>{
+  const info=document.getElementById('dg-run-info');
+  info.textContent='Running gate… (gather + LLM, can take up to a minute)';
+  const r=await dgPost('/api/digest/run');
+  const d=await r.json().catch(()=>({}));
+  info.textContent=r.ok?('Done — '+d.note):('Failed: '+r.status);
+  loadDigest();
+});
+
+/* ---- Tabs: audit (default) | bot-queue | digest | settings, deep-linked via ?tab= ---- */
 function showTab(t){
   document.getElementById('tab-audit').hidden=(t!=='audit');
   document.getElementById('tab-bot-queue').hidden=(t!=='bot-queue');
+  document.getElementById('tab-digest').hidden=(t!=='digest');
   document.getElementById('tab-settings').hidden=(t!=='settings');
   document.querySelectorAll('.tab').forEach(a=>{
     a.classList.toggle('active',a.getAttribute('data-tab')===t);
   });
   if(t==='bot-queue'){loadQueue();}
+  else if(t==='digest'){loadDigest();}
   else if(t==='settings'){loadSettings();}
   else{loadStats();loadRows();}
 }

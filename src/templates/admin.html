@@ -10,6 +10,7 @@
 <nav class="tabs">
   <a class="tab" data-tab="audit" href="?tab=audit">Audit log</a>
   <a class="tab" data-tab="bot-queue" href="?tab=bot-queue">Bot queue</a>
+  <a class="tab" data-tab="digest" href="?tab=digest">Digest</a>
   <a class="tab" data-tab="settings" href="?tab=settings">Settings</a>
 </nav>
 <main>
@@ -70,6 +71,69 @@
       <tbody id="bq-rows"><tr class="empty"><td colspan="7">Loading...</td></tr></tbody>
     </table>
     </div>
+  </section>
+  <section id="tab-digest" hidden>
+    <div class="notice" id="dg-notice" hidden></div>
+    <div class="stats" id="dg-stats"></div>
+    <div class="filters">
+      <button id="dg-refresh">Refresh</button>
+      <button id="dg-run" title="Run the digest gate now (same code path as the hourly cron)">Run now</button>
+      <span class="info" id="dg-run-info"></span>
+    </div>
+
+    <div class="dg-editor" id="dg-editor" hidden>
+      <div class="dg-editor-head">
+        <strong id="dg-editor-title"></strong>
+        <span class="info" id="dg-editor-meta"></span>
+      </div>
+      <div class="dg-toolbar">
+        <button type="button" data-wrap="b" title="Bold"><b>B</b></button>
+        <button type="button" data-wrap="i" title="Italic"><i>I</i></button>
+        <button type="button" data-wrap="u" title="Underline"><u>U</u></button>
+        <button type="button" data-wrap="s" title="Strikethrough"><s>S</s></button>
+        <button type="button" data-wrap="a" title="Link (uses clipboard or selection URL)">🔗</button>
+        <button type="button" data-wrap="code" title="Code">&lt;/&gt;</button>
+        <button type="button" data-wrap="blockquote" title="Quote">❝</button>
+      </div>
+      <textarea id="dg-body" rows="12" spellcheck="false"></textarea>
+      <div class="dg-editor-info">
+        <span id="dg-count" class="mono"></span>
+        <span class="info">Telegram HTML: &lt;b&gt; &lt;i&gt; &lt;u&gt; &lt;s&gt; &lt;a href&gt; &lt;code&gt; &lt;blockquote&gt; only — everything else is stripped on publish.</span>
+      </div>
+      <div class="dg-preview-label">Preview (approximate Telegram rendering)</div>
+      <div class="dg-preview" id="dg-preview" dir="auto"></div>
+      <div class="dg-actions">
+        <button id="dg-save" class="dg-btn">Save draft</button>
+        <button id="dg-restore" class="dg-btn" title="Revert to the original LLM output">Restore original</button>
+        <button id="dg-publish" class="dg-btn primary">Publish</button>
+        <button id="dg-discard" class="dg-btn danger">Discard</button>
+        <button id="dg-close" class="dg-btn">Close</button>
+        <span class="info" id="dg-editor-status"></span>
+      </div>
+    </div>
+
+    <h3 class="dg-h">Pending drafts</h3>
+    <div class="table-wrap">
+    <table class="dg-table">
+      <thead><tr>
+        <th>Slot</th><th>Type</th><th>Title</th><th>Preview</th><th>Run (UTC)</th><th>Size</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="dg-drafts"><tr class="empty"><td colspan="7">Loading…</td></tr></tbody>
+    </table>
+    </div>
+
+    <h3 class="dg-h">Published</h3>
+    <div class="table-wrap">
+    <table class="dg-table">
+      <thead><tr>
+        <th>Title</th><th>Type</th><th>Published (UTC)</th><th>Reactions</th><th>Message</th><th>Edited</th>
+      </tr></thead>
+      <tbody id="dg-published"><tr class="empty"><td colspan="6">Loading…</td></tr></tbody>
+    </table>
+    </div>
+
+    <h3 class="dg-h">Resolved settings</h3>
+    <details class="dg-settings"><summary>show</summary><pre id="dg-settings">…</pre></details>
   </section>
   <section id="tab-settings" hidden>
     <div class="notice" id="st-notice" hidden></div>

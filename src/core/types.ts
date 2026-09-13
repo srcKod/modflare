@@ -147,6 +147,88 @@ export interface Env {
    * Defaults to 30.
    */
   LOG_RETENTION_DAYS?: string;
+  /* ----------------------------------------------------------------
+   * News digest (FEATURE_PLAN.md) — all optional with preset defaults
+   * ---------------------------------------------------------------- */
+
+  /** Master switch: 'true' enables the digest cron gate. Default off. */
+  ENABLE_NEWS_DIGEST?: string;
+  /** Content-domain preset: tech | tech-zh | finance | science | health | custom. Default tech. */
+  NEWS_DOMAIN?: string;
+  /** What to include: news | papers | both. Default news. */
+  NEWS_MODE?: string;
+  /** Comma-separated topic queries. Overrides the preset. */
+  NEWS_TOPICS?: string;
+  /**
+   * News engine override: gnews | hn | rss | tavily | exa | ddg.
+   * Default: the preset's engine list. Comma list = additive engines.
+   */
+  NEWS_ENGINE?: string;
+  /** Explicit publisher-RSS URLs (comma-separated) for engine `rss` / additive feeds. */
+  NEWS_RSS_FEEDS?: string;
+  /** arXiv categories (comma list → cat:X OR cat:Y). Default from preset. */
+  NEWS_ARXIV_CATEGORIES?: string;
+  /** Trusted-source domain allowlist applied to all engine results. Empty = preset. */
+  NEWS_INCLUDE_DOMAINS?: string;
+  /** HN quality threshold: numericFilters=points>N. Default 25. */
+  NEWS_MIN_POINTS?: string;
+  /** Items the LLM selects per digest. Default 5 (cap 8 for free-plan budgets). */
+  NEWS_MAX_ITEMS?: string;
+  /** 'true' = fetch + extract full text for the top items. Default off (token/CPU frugal). */
+  NEWS_FETCH_FULLTEXT?: string;
+  /** Target channel/group (@username or -100… id). Bot must be an admin there. */
+  NEWS_TARGET_CHAT_ID?: string;
+  /** Local (TIMEZONE) hours to publish the daily digest, e.g. "9,18". Default 9. */
+  NEWS_PUBLISH_HOURS?: string;
+  /** 'true' enables the weekly Roundup (built from the week's published items). */
+  NEWS_ENABLE_WEEKLY?: string;
+  /** Day of week for the Roundup, 0=Sunday. Default 0. */
+  NEWS_WEEKLY_DAY?: string;
+  /** 'true' enables the monthly Deep Dive. */
+  NEWS_ENABLE_MONTHLY?: string;
+  /** Day of month for the Deep Dive. Default 1. */
+  NEWS_MONTHLY_DAY?: string;
+  /** Output language of the digest post. Default English. */
+  NEWS_LANGUAGE?: string;
+  /** Optional dialect hint (e.g. "Standard" / "Levantine" for Arabic). */
+  NEWS_DIALECT?: string;
+  /**
+   * 'true' = publish directly at the configured time.
+   * 'false' (default) = store as a draft and wait for admin approval.
+   */
+  NEWS_AUTO_PUBLISH?: string;
+  /**
+   * Chat that gets "draft ready" notices. Unset = DM every id in
+   * ADMIN_USER_IDS (silent failures for admins who never started the bot).
+   */
+  NEWS_DRAFT_NOTIFY_CHAT_ID?: string;
+  /** Drafts older than this many days are auto-discarded by the daily prune. Default 7. */
+  NEWS_DRAFT_TTL_DAYS?: string;
+  /** 'true' = capture message_reaction[_count] updates into digest_post_stats. Default off. */
+  ENABLE_POST_ANALYTICS?: string;
+  /** Optional sponsor footer line appended after sanitization (never LLM-generated). */
+  NEWS_SPONSOR_TEXT?: string;
+  /** Tavily Search API key (secret) — enables the `tavily` news engine. */
+  TAVILY_API_KEY?: string;
+  /** Exa API key (secret) — enables the `exa` news engine. */
+  EXA_API_KEY?: string;
+  /** Jina Reader key (secret) — raises the fallback extractor above keyless limits. */
+  JINA_API_KEY?: string;
+
+  /** Digest LLM endpoint override. Unset = OPENAI_BASE_URL. */
+  DIGEST_BASE_URL?: string;
+  /** Digest LLM key override. Unset = OPENAI_API_KEY. */
+  DIGEST_API_KEY?: string;
+  /** Digest model id. Unset = TEXT_MODEL, then MODEL_NAME. */
+  DIGEST_MODEL?: string;
+  /** Digest output token cap. Default 2048 (independent of LLM_MAX_TOKENS). */
+  DIGEST_MAX_TOKENS?: string;
+  /** Digest LLM timeout ms. Default 120000. */
+  DIGEST_TIMEOUT_MS?: string;
+  /** Provider params merged into the digest request body (e.g. thinking-off). Unset = LLM_EXTRA_BODY_JSON. */
+  DIGEST_EXTRA_BODY_JSON?: string;
+  /** 'json' = send response_format json_object for the digest. Default json. */
+  DIGEST_RESPONSE_FORMAT?: string;
 }
 
 /** Telegram Update object (subset relevant to this bot). */
@@ -154,6 +236,21 @@ export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
   edited_message?: TelegramMessage;
+
+  /** Anonymous reaction aggregate (channels default) — analytics input. */
+  message_reaction_count?: {
+    chat: { id: number };
+    message_id: number;
+    reactions?: {
+      total_count?: number;
+      type?: { type?: string; emoji?: string };
+    }[];
+  };
+  /** Named (non-anonymous) reaction delta — per-user signal. */
+  message_reaction?: {
+    chat: { id: number };
+    message_id: number;
+  };
 }
 
 /** Telegram Message object (subset). */

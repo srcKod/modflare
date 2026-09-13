@@ -11,9 +11,10 @@ import { handleAdmin } from './core/admin';
 import { settingsAdminRoutes } from './core/settings-admin';
 import type { Env, TelegramUpdate } from './core/types';
 import { moderationFeature } from './features/moderation';
+import { digestFeature } from './features/digest';
 
 /** All worker features. New features register here and nowhere else. */
-const FEATURES: FeatureManifest[] = [moderationFeature];
+const FEATURES: FeatureManifest[] = [moderationFeature, digestFeature];
 
 // 1x1 transparent PNG (67 bytes) used as the /favicon.ico response so
 // browser tab requests don't surface 405 errors in the dev console.

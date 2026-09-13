@@ -77,10 +77,18 @@ export async function handleAdmin(
   if (rest === '/style.css') return staticAsset(STYLE_CSS, 'text/css; charset=utf-8');
   if (rest === '/app.js') return staticAsset(APP_JS, 'text/javascript; charset=utf-8');
 
-  // Feature-contributed API routes (method + exact rest match).
-  const route = featureRoutes.find(
-    (r) => r.method === request.method && r.rest === rest,
-  );
+  // Feature-contributed API routes: exact rest match first, then prefix
+  // (parameterized paths — the handler parses the remainder itself).
+  const route =
+    featureRoutes.find(
+      (r) => r.method === request.method && r.rest === rest,
+    ) ??
+    featureRoutes.find(
+      (r) =>
+        r.method === request.method &&
+        r.prefix !== undefined &&
+        rest.startsWith(r.prefix),
+    );
   if (route) return route.handler(request, env);
 
   return json({ error: 'Not found' }, 404);

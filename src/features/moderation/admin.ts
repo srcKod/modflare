@@ -7,6 +7,7 @@
 
 import { envBool } from '../../core/config';
 import { json } from '../../core/admin';
+import { loadSettingOverrides, resolveSetting, settingBool, settingSource } from '../../core/settings';
 import type { AdminRoute } from '../../core/router';
 import type { Env } from '../../core/types';
 import { parseModerationDetailed } from './llm';
@@ -282,11 +283,29 @@ function csvCell(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Moderation's contribution to the admin panel API (all GET, read-only). */
+/**
+ * GET /api/moderation/enabled — single-source view of the master switch's
+ * effective state, for the panel to render a prominent status badge.
+ * Resolution order: D1 settings override → ENABLE_MODERATION env → default on.
+ */
+async function handleModerationEnabled(_request: Request, env: Env): Promise<Response> {
+  const overrides = await loadSettingOverrides(env.DB);
+  const raw = resolveSetting(env, overrides, 'moderation_enabled');
+  const enabled = settingBool(raw, true);
+  return json({
+    enabled,
+    source: settingSource(env, overrides, 'moderation_enabled'),
+  });
+}
+
+/** Moderation's contribution to the admin panel API. Reads are read-only
+ *  (SELECT only) — the audit panel never mutates logs; the master switch
+ *  reads through the shared settings layer. */
 export const moderationAdminRoutes: AdminRoute[] = [
   { method: 'GET', rest: '/api/logs', handler: handleLogs },
   { method: 'GET', rest: '/api/summary', handler: handleSummary },
   { method: 'GET', rest: '/api/events', handler: handleEvents },
   { method: 'GET', rest: '/api/bot-queue', handler: handleBotQueue },
   { method: 'GET', rest: '/export.csv', handler: handleExport },
+  { method: 'GET', rest: '/api/moderation/enabled', handler: handleModerationEnabled },
 ];
