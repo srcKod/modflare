@@ -523,7 +523,7 @@ async function loadDigest(){
         '<td>'+typeBadge(row.type)+'</td>'+
         '<td>'+domainBadge(row.domain)+'</td>'+
         '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
-        '<td><div class="reason">'+esc(row.preview||'')+'</div></td>'+
+        '<td><div class="reason">'+renderTgHtml(row.preview||'')+'</div></td>'+
         '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
         '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
         '<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>'+
