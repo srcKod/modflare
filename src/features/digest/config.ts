@@ -353,3 +353,32 @@ export function isSeedEnabled(seed: string | boolean | undefined): boolean {
   return String(seed || '').trim().toLowerCase() === 'true';
 }
 
+/**
+ * Parsed intent of a `/api/digest/drafts...` path (relative to the panel base).
+ * Pure + exported so the digit-matching regexes are unit-tested. These *must* be
+ * regex literals: a previous `new RegExp('...(\\d+)...')` collapsed `\d` to a
+ * literal `d` and silently 404'd every numeric draft id.
+ */
+export type DraftsIntent =
+  | { kind: 'list' }
+  | { kind: 'one'; id: number }
+  | { kind: 'action'; id: number; action: 'save' | 'publish' | 'discard' }
+  | { kind: 'unknown'; rest: string };
+
+const ACTION_RE = /^\/api\/digest\/drafts\/(\d+)\/(save|publish|discard)$/;
+const ONE_RE = /^\/api\/digest\/drafts\/(\d+)$/;
+
+export function parseDraftsPath(rest: string): DraftsIntent {
+  if (rest === '/api/digest/drafts') return { kind: 'list' };
+  const action = ACTION_RE.exec(rest);
+  if (action)
+    return {
+      kind: 'action',
+      id: Number(action[1]),
+      action: action[2] as 'save' | 'publish' | 'discard',
+    };
+  const one = ONE_RE.exec(rest);
+  if (one) return { kind: 'one', id: Number(one[1]) };
+  return { kind: 'unknown', rest };
+}
+

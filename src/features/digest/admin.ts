@@ -18,6 +18,7 @@ import {
   isRotationDomain,
   parseSchedule,
   isSeedEnabled,
+  parseDraftsPath,
 } from './config';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
@@ -473,26 +474,17 @@ async function handleDigestSettings(env: Env): Promise<Response> {
 async function handleDraftsRoute(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const base = env.ADMIN_PANEL_PATH || '/admin';
-  const rest = url.pathname.slice(base.length);
+  const intent = parseDraftsPath(url.pathname.slice(base.length));
 
-  if (request.method === 'GET' && rest === '/api/digest/drafts') {
+  if (intent.kind === 'list' && request.method === 'GET') {
     return handleDigestList(env);
   }
-  const actionMatch = new RegExp(
-    '^/api/digest/drafts/(\d+)/(save|publish|discard)$',
-  ).exec(rest);
-  if (actionMatch) {
+  if (intent.kind === 'action') {
     if (!csrfOk(request)) return json({ error: 'CSRF check failed' }, 403);
-    return handleDigestAction(
-      env,
-      Number(actionMatch[1]),
-      actionMatch[2] as 'save' | 'publish' | 'discard',
-      request,
-    );
+    return handleDigestAction(env, intent.id, intent.action, request);
   }
-  const oneMatch = new RegExp('^/api/digest/drafts/(\d+)$').exec(rest);
-  if (oneMatch) {
-    return handleDigestOne(env, Number(oneMatch[1]));
+  if (intent.kind === 'one') {
+    return handleDigestOne(env, intent.id);
   }
   return json({ error: 'Not found' }, 404);
 }
