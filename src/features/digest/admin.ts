@@ -283,15 +283,18 @@ async function handleDigestSeed(env: Env): Promise<Response> {
   const postId = insert.meta.last_row_id as number | undefined;
 
   // Source rows mirror the inline links in the body above (same URLs), so the
-  // draft's digest_items table matches a real run's shape.
+  // draft's digest_items table matches a real run's shape. sha256Hex is async —
+  // it MUST be awaited; passing the raw Promise into .bind() makes D1 reject
+  // the statement (the old code silently inserted no item rows at all).
   for (const s of src) {
     const url = s.url;
+    const urlHash = await sha256Hex(normalizeUrl(url));
     await env.DB
       .prepare(
         `INSERT OR IGNORE INTO digest_items (url_hash, url, title, source, digest_post_id)
          VALUES (?, ?, ?, ?, ?)`,
       )
-      .bind(sha256Hex(normalizeUrl(url)), url, s.source.slice(0, 300), domainOf(url) || s.source, postId ?? null)
+      .bind(urlHash, url, s.source.slice(0, 300), domainOf(url) || s.source, postId ?? null)
       .run();
   }
 
