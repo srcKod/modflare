@@ -118,25 +118,34 @@ function firstTagBlock(xml: string, tag: string): string[] {
 }
 
 async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+  // gnewsLocale may be a comma-separated list of locales (the `tech` preset
+  // queries en-US AND zh-CN). Run one fetch per locale and merge — the later
+  // dedupe pass (URL hash + fuzzy title) collapses any cross-locale overlap.
+  const locales = (q.gnewsLocale || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const query = encodeURIComponent(q.topics.join(' OR '));
-  const url = `https://news.google.com/rss/search?q=${query}&${q.gnewsLocale}`;
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) return;
-  const xml = await res.text();
-  for (const item of firstTagBlock(xml, 'item').slice(0, 6)) {
-    const title = tagText(item, 'title');
-    const link = tagText(item, 'link');
-    if (!title || !link) continue;
-    const sourceEl = /<source[^>]*>([\s\S]*?)<\/source>/i.exec(item);
-    out.push({
-      tag: 'headlines',
-      title,
-      url: link,
-      source: sourceEl
-        ? decodeEntities(stripCdata(sourceEl[1])).trim() || domainOf(link)
-        : domainOf(link),
-      date: tagText(item, 'pubDate'),
-    });
+  for (const locale of locales) {
+    const url = `https://news.google.com/rss/search?q=${query}&${locale}`;
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) continue;
+    const xml = await res.text();
+    for (const item of firstTagBlock(xml, 'item').slice(0, 6)) {
+      const title = tagText(item, 'title');
+      const link = tagText(item, 'link');
+      if (!title || !link) continue;
+      const sourceEl = /<source[^>]*>([\s\S]*?)<\/source>/i.exec(item);
+      out.push({
+        tag: 'headlines',
+        title,
+        url: link,
+        source: sourceEl
+          ? decodeEntities(stripCdata(sourceEl[1])).trim() || domainOf(link)
+          : domainOf(link),
+        date: tagText(item, 'pubDate'),
+      });
+    }
   }
 }
 

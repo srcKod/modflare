@@ -21,27 +21,28 @@ interface DomainPreset {
 }
 
 const DOMAIN_PRESETS: Record<string, DomainPreset> = {
+  // `tech` spans western + Chinese sources: gnews is queried in BOTH the en-US
+  // and zh-CN locales (see engineGnews), the Chinese outlets below come in
+  // through `rss`, and cs.RO is added to cover the robotics surge. cs.CL keeps
+  // the language-model angle that 大模型 maps to.
   tech: {
     topics: [
       'artificial intelligence',
+      'AI agents',
       'developer tools',
       'cloud computing',
       'cybersecurity',
+      'robotics',
+      '人工智能',
+      '大模型',
+      '机器人',
     ],
     newsEngines: ['gnews', 'hn'],
     scholarEngines: ['arxiv', 'hf'],
-    arxivCats: ['cs.AI', 'cs.CL', 'cs.LG'],
+    arxivCats: ['cs.AI', 'cs.CL', 'cs.LG', 'cs.RO'],
     includeDomains: [],
-    gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
-    rssFeeds: [],
-  },
-  'tech-zh': {
-    topics: ['人工智能', '大模型', '开发者工具', '云计算'],
-    newsEngines: ['gnews'],
-    scholarEngines: ['arxiv', 'hf'],
-    arxivCats: ['cs.AI', 'cs.CL', 'cs.LG'],
-    includeDomains: [],
-    gnewsLocale: 'hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
+    // Comma-separated — engineGnews runs one fetch per locale and merges.
+    gnewsLocale: 'hl=en-US&gl=US&ceid=US:en,hl=zh-CN&gl=CN&ceid=CN:zh-Hans',
     rssFeeds: [
       'https://www.qbitai.com/feed',
       'https://www.scmp.com/rss/91/feed',
@@ -101,6 +102,69 @@ export const ROTATION_PRESETS = Object.keys(DOMAIN_PRESETS).filter(
 /** True when NEWS_DOMAIN holds a rotation strategy rather than a preset. */
 export function isRotationDomain(value: string): boolean {
   return ROTATION_STRATEGIES.includes((value || '').trim().toLowerCase());
+}
+
+/* ------------------------------------------------------------------ */
+/* Intraday schedule (plan §23.6)                                      */
+/* ------------------------------------------------------------------ */
+
+/** Content type of an intraday slot — a CandidateTag the slot gathers for. */
+export type SlotTag = 'headlines' | 'trending' | 'papers';
+
+/** A single intraday slot: the engines + LLM mode it runs. */
+export interface SlotConfig {
+  tag: SlotTag;
+  mode: DigestMode;
+  /** Engines to gather from for this slot (already split news/scholar). */
+  newsEngines: string[];
+  scholarEngines: string[];
+}
+
+/**
+ * Parse NEWS_SCHEDULE (CSV of `hour:tag`) into hour → SlotConfig.
+ *   e.g. "9:headlines,14:papers,20:trending"
+ * Hours are local (TIMEZONE). Unknown tags are skipped. `segment` is reserved
+ * and not schedulable yet.
+ */
+export function parseSchedule(raw: string | undefined): Record<number, SlotConfig> {
+  const out: Record<number, SlotConfig> = {};
+  for (const part of envList(raw)) {
+    // `hour:tag` is a single token (envList splits on whitespace, so the colon
+    // must stay glued to its hour and tag — "9:headlines", never "9 : headlines").
+    const m = /^(\d{1,2}):(\w+)$/.exec(part);
+    if (!m) continue;
+    const hour = Number(m[1]);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    const tag = m[2] as SlotTag;
+    if (tag !== 'headlines' && tag !== 'trending' && tag !== 'papers') continue;
+    out[hour] = slotForTag(tag);
+  }
+  return out;
+}
+
+/** The engine set + mode for a given slot tag. Paid engines (tavily/exa)
+ *  gate on their key inside the engine fns, so listing them is safe even when
+ *  unset — they simply no-op. */
+function slotForTag(tag: SlotTag): SlotConfig {
+  switch (tag) {
+    case 'papers':
+      return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf'] };
+    case 'trending':
+      return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [] };
+    case 'headlines':
+    default:
+      return {
+        tag,
+        mode: 'news',
+        newsEngines: ['gnews', 'hn', 'rss', 'tavily', 'exa'],
+        scholarEngines: [],
+      };
+  }
+}
+
+/** True when NEWS_SCHEDULE declares at least one slot. */
+export function hasSchedule(env: Pick<Env, 'NEWS_SCHEDULE'>): boolean {
+  return Object.keys(parseSchedule(env.NEWS_SCHEDULE)).length > 0;
 }
 
 /* ------------------------------------------------------------------ */

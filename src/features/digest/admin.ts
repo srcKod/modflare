@@ -1,8 +1,8 @@
 /**
- * Digest review console: the panel's one mutation surface (draft save /
- * publish / discard / regenerate + force-run), plus read-only stats and
- * resolved-settings views. Mounted behind the core admin cookie auth; POST
- * handlers additionally enforce a CSRF guard (custom header + Origin check).
+ * Digest review console: the panel's mutation surface (draft save / publish /
+ * discard, dev-seed), plus read-only stats and resolved-settings views.
+ * Mounted behind the core admin cookie auth; POST handlers additionally enforce
+ * a CSRF guard (custom header + Origin check).
  */
 
 import { json } from '../../core/admin';
@@ -11,14 +11,15 @@ import type { Env } from '../../core/types';
 import { makeLogger } from '../../core/logger';
 import { sendMessageDetailed } from '../../core/telegram';
 import { sanitizeTelegramHtml } from '../../shared/telegram-html';
+import { domainOf, normalizeUrl, sha256Hex } from '../../shared/sources';
 import {
   resolveDigestConfig,
   parseReactionSignals,
   isRotationDomain,
+  parseSchedule,
 } from './config';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
-import { runDigestGate } from './pipeline';
 
 /* CSRF guard for the digest mutation endpoints                        */
 /* ------------------------------------------------------------------ */
@@ -211,9 +212,74 @@ async function handleDigestAction(
   return json({ ok: false, error: sent.description ?? 'send_failed' }, 502);
 }
 
-async function handleDigestRun(env: Env): Promise<Response> {
-  await runDigestGate(env, true);
-  return json({ ok: true, note: 'gate ran — check the runs list for the new row' });
+/**
+ * Dev-only: insert a realistic fake draft so the review/edit/publish/discard
+ * workflow can be exercised end-to-end without triggering the pipeline. Gated
+ * behind ENABLE_NEWS_DIGEST + the (gitignored) NEWS_DEV_SEED toggle so it can
+ * never run in production. Idempotent per call — each click makes a new draft.
+ */
+async function handleDigestSeed(env: Env): Promise<Response> {
+  if ((env.NEWS_DEV_SEED || '').trim().toLowerCase() !== 'true') {
+    return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true to enable)' }, 404);
+  }
+  if (!env.DB) return json({ error: 'D1 not configured' }, 500);
+  const cfg = resolveDigestConfig(env);
+  if (!cfg.targetChatId) {
+    return json({ error: 'NEWS_TARGET_CHAT_ID required to seed a draft' }, 400);
+  }
+  const slot = `dev-seed-${Date.now()}`;
+  const title = '[dev] Sample digest — ملخص تجريبي';
+  const body = [
+    '📰 <b>مراجعة الذكاء الاصطناعي — ملخص تجريبي</b>',
+    '',
+    '• <b>نموذج لغوي جديد يُحسن الاستدلال متعدد الخطوات</b> — ملخص موجز من سطرين يلخّص التحسين المُعلن مع الحفاظ على الحقائق ودون مبالغة، ويُظهر كيف تبدو بطاقة الخبر داخل المسودة.',
+    '<a href="s1">المصدر</a>',
+    '',
+    '• <b>ورقة روبوتات: تعلّم المحاكاة إلى العالم الحقيقي</b> — نقل السياسات من المحاكاة إلى الواقع مع تقليل الفجوة بنسبة ملحوظة على مهام الإمساك الدقيق.',
+    '<a href="s2">arXiv</a>',
+    '',
+    '— · مصادر تجريبية',
+  ].join('\n');
+
+  const insert = await env.DB
+    .prepare(
+      `INSERT INTO digest_posts
+         (slot_key, type, run_at, mode, domain, target_chat_id,
+          title, body, body_original, status, provider, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+    )
+    .bind(
+      slot,
+      'daily',
+      new Date().toISOString(),
+      cfg.mode,
+      cfg.effectiveDomain,
+      cfg.targetChatId,
+      title,
+      body,
+      body,
+      cfg.llm.baseUrl,
+      cfg.llm.model,
+    )
+    .run();
+  const postId = insert.meta.last_row_id as number | undefined;
+
+  // A couple of placeholder items so the draft has source rows too.
+  const items = [
+    { url: 'https://example.com/ai-reasoning', title: 'نموذج لغوي جديد يُحسن الاستدلال' },
+    { url: 'https://arxiv.org/abs/2026.00000', title: 'ورقة روبوتات: محاكاة إلى عالم حقيقي' },
+  ];
+  for (const it of items) {
+    await env.DB
+      .prepare(
+        `INSERT OR IGNORE INTO digest_items (url_hash, url, title, source, digest_post_id)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(sha256Hex(normalizeUrl(it.url)), it.url, it.title.slice(0, 300), domainOf(it.url) || 'example.com', postId ?? null)
+      .run();
+  }
+
+  return json({ ok: true, id: postId, slot_key: slot });
 }
 
 /**
@@ -388,6 +454,9 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     sponsor: cfg.sponsorText ?? null,
     reactionSignals: signals,
     llm: { baseUrl: cfg.llm.baseUrl, model: cfg.llm.model },
+    // Intraday schedule as configured (server authoritative). Empty object
+    // when NEWS_SCHEDULE is unset — the panel falls back to publishHours.
+    schedule: parseSchedule(env.NEWS_SCHEDULE),
   });
 }
 
@@ -429,12 +498,14 @@ async function handleDraftsRoute(request: Request, env: Env): Promise<Response> 
 
 export const digestAdminRoutes: AdminRoute[] = [
   { method: 'GET', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
+  // Dev-only seed (NEWS_DEV_SEED=true): insert a fake draft to exercise the
+  // review/edit/publish/discard workflow without running the pipeline.
   {
     method: 'POST',
-    rest: '/api/digest/run',
+    rest: '/api/digest/dev/seed',
     handler: async (request, env) => {
       if (!csrfOk(request)) return json({ error: 'CSRF check failed' }, 403);
-      return handleDigestRun(env);
+      return handleDigestSeed(env);
     },
   },
   { method: 'GET', rest: '/api/digest/stats', handler: (request, env) => handleDigestStats(request, env) },

@@ -27,8 +27,14 @@ import {
   normalizeUrl,
 } from '../../shared/sources';
 import type { DigestCandidate } from '../../shared/sources';
-import { resolveDigestConfig, isRotationDomain, ROTATION_PRESETS } from './config';
-import type { DigestContentType } from './config';
+import {
+  resolveDigestConfig,
+  isRotationDomain,
+  ROTATION_PRESETS,
+  parseSchedule,
+  hasSchedule,
+} from './config';
+import type { DigestContentType, SlotConfig } from './config';
 import type { DigestConfig } from './config';
 import { digestAdminRoutes } from './admin';
 
@@ -243,11 +249,16 @@ function isoWeek(dateStr: string): string {
   return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-export function computeSlotKey(type: DigestContentType, lp: { date: string; hour: number }): string {
+export function computeSlotKey(
+  type: DigestContentType,
+  lp: { date: string; hour: number },
+  /** Intraday slot tag — appended so same-day slots don't collide. */
+  tag?: string,
+): string {
   const hh = String(lp.hour).padStart(2, '0');
   if (type === 'weekly') return `weekly-${isoWeek(lp.date)}`;
   if (type === 'monthly') return `monthly-${lp.date.slice(0, 7)}`;
-  return `${lp.date}T${hh}`;
+  return tag ? `${lp.date}T${hh}:${tag}` : `${lp.date}T${hh}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -371,6 +382,9 @@ async function runDigest(
   cfg: DigestConfig,
   type: DigestContentType,
   logger: AuditLogger,
+  /** Intraday slot override — replaces the engines/mode for this run and
+   *  tags the slot key so same-day slots don't collide. */
+  slot?: SlotConfig,
 ): Promise<void> {
   const db = env.DB;
   if (!db || !cfg.targetChatId) {
@@ -378,16 +392,36 @@ async function runDigest(
     return;
   }
   const lp = localParts(env.TIMEZONE);
-  const slotKey = computeSlotKey(type, lp);
+  const slotKey = computeSlotKey(type, lp, slot?.tag);
   const now = new Date().toISOString();
+
+  // Intraday slot: pin the engines + mode to the slot's tag. Applied before
+  // rotation so the per-tag engine set survives the domain pick below.
+  if (slot) {
+    cfg = {
+      ...cfg,
+      mode: slot.mode,
+      newsEngines: slot.newsEngines,
+      scholarEngines: slot.scholarEngines,
+    };
+  }
 
   // Rotation: the gate resolves a placeholder cfg; decide this slot's real
   // domain first, then rebuild the config from the effective preset so the
   // topics/engines/locale all match what actually runs. cfg.effectiveDomain
-  // (not cfg.domain) is what gets stored in digest_posts.domain.
+  // (not cfg.domain) is what gets stored in digest_posts.domain. Re-apply the
+  // slot engine/mode override afterwards since resolveDigestConfig rebuilds them.
   if (cfg.rotation) {
     const picked = await resolveSlotDomain(env, db, slotKey);
     cfg = resolveDigestConfig(env, picked);
+    if (slot) {
+      cfg = {
+        ...cfg,
+        mode: slot.mode,
+        newsEngines: slot.newsEngines,
+        scholarEngines: slot.scholarEngines,
+      };
+    }
   }
 
   // Idempotency: same slot + chat already attempted → no-op.
@@ -637,53 +671,56 @@ async function runDigest(
 
 /**
  * Hourly gate: resolves the current local time (TIMEZONE) into a content
- * type and runs the pipeline for the matching slot. Priority when several
- * types match: monthly > weekly > daily (avoids triple-posting).
+ * type and runs the pipeline for the matching slot.
+ *
+ * Priority when several types match (avoids triple-posting):
+ *   monthly > weekly > intraday-schedule > legacy daily.
+ *
+ * Intraday schedule (NEWS_SCHEDULE) is the preferred driver: each slot pins
+ * its own engines + mode via a SlotConfig and tags its slot key, so a single
+ * day can run e.g. headlines @09, papers @14, trending @20 without colliding.
+ * When NEWS_SCHEDULE is unset, the legacy NEWS_PUBLISH_HOURS daily behavior
+ * is preserved for backward compatibility.
  */
-export async function runDigestGate(env: Env, force = false): Promise<void> {
+export async function runDigestGate(env: Env): Promise<void> {
   if ((env.ENABLE_NEWS_DIGEST || '').trim().toLowerCase() !== 'true') return;
   const logger = makeLoggerFor(env);
   const cfg = resolveDigestConfig(env);
   const lp = localParts(env.TIMEZONE);
 
   let type: DigestContentType | null = null;
-  if (!force) {
-    if (
-      cfg.monthlyEnabled &&
-      lp.day === cfg.monthlyDay &&
-      lp.hour === cfg.publishHours[0]
-    ) {
-      type = 'monthly';
-    } else if (
-      cfg.weeklyEnabled &&
-      lp.weekday === cfg.weeklyDay &&
-      lp.hour === cfg.publishHours[0]
-    ) {
-      type = 'weekly';
-    } else if (cfg.publishHours.includes(lp.hour)) {
-      type = 'daily';
-    }
+  let slot: SlotConfig | undefined;
+
+  if (
+    cfg.monthlyEnabled &&
+    lp.day === cfg.monthlyDay &&
+    lp.hour === cfg.publishHours[0]
+  ) {
+    type = 'monthly';
+  } else if (
+    cfg.weeklyEnabled &&
+    lp.weekday === cfg.weeklyDay &&
+    lp.hour === cfg.publishHours[0]
+  ) {
+    type = 'weekly';
   } else {
-    // Forced run (admin "run now"): use the most advanced eligible type so
-    // testing exercises the same code path production will.
-    type = cfg.monthlyEnabled && lp.day === cfg.monthlyDay ? 'monthly' : 'daily';
-    if (
-      type === 'daily' &&
-      cfg.weeklyEnabled &&
-      lp.weekday === cfg.weeklyDay
-    ) {
-      type = 'weekly';
+    const scheduled = parseSchedule(env.NEWS_SCHEDULE)[lp.hour];
+    if (scheduled) {
+      type = 'daily';
+      slot = scheduled;
+    } else if (!hasSchedule(env) && cfg.publishHours.includes(lp.hour)) {
+      type = 'daily';
     }
   }
   if (!type) return;
 
   try {
-    await runDigest(env, cfg, type, logger);
+    await runDigest(env, cfg, type, logger, slot);
   } catch (err) {
     await logger.error('news_error', {
       chat_id: Number(cfg.targetChatId) || null,
       reason: `gate:${String(err).slice(0, 300)}`,
-      extra: { type },
+      extra: { type, slot: slot?.tag },
     });
   }
 }

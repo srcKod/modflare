@@ -675,19 +675,19 @@ document.getElementById('dg-refresh').addEventListener('click',()=>{
   closeEditor();   // a stale editor open across a refresh shows old state (§23.4)
   loadDigest();
 });
-document.getElementById('dg-run').addEventListener('click',async()=>{
-  const btn=document.getElementById('dg-run');
-  const info=document.getElementById('dg-run-info');
+// Dev-only: insert a fake draft to exercise the review/edit/publish flow.
+// Gated server-side by NEWS_DEV_SEED — returns 404 in production.
+document.getElementById('dg-seed').addEventListener('click',async()=>{
+  if(!window.confirm('Insert a test draft? It will appear in Pending drafts and can be reviewed, edited, published or discarded.'))return;
+  const btn=document.getElementById('dg-seed');
   dgSetLoading(btn,true);
-  info.textContent='Running gate… (gather + LLM, can take up to a minute)';
   try{
-    const r=await dgPost('/api/digest/run');
+    const r=await dgPost('/api/digest/dev/seed');
     const d=await r.json().catch(()=>({}));
-    if(r.ok){dgToast('Digest run started — refresh in a moment.','ok');info.textContent='Run started.';}
-    else{const m='Run failed: '+(d.error||r.status);dgToast(m,'err');info.textContent=m;}
-  }catch(err){const m='Run failed: '+(err&&err.message||err);dgToast(m,'err');info.textContent=m;}
+    if(r.ok){dgToast('Test draft inserted — check Pending drafts.','ok');loadDigest();}
+    else{const m=d.error||('Failed ('+r.status+')');dgToast(m,'err');}
+  }catch(err){dgToast('Seed failed: '+(err&&err.message||err),'err');}
   finally{dgSetLoading(btn,false);}
-  loadDigest();
 });
 
 /* ---- Tabs: audit (default) | bot-queue | digest | settings, deep-linked via ?tab= ---- */

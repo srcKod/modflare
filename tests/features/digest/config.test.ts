@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isRotationDomain,
   parseReactionSignals,
+  parseSchedule,
   ROTATION_PRESETS,
 } from '../../../src/features/digest/config';
 import { resolveSlotDomain } from '../../../src/features/digest/pipeline';
@@ -39,7 +40,7 @@ describe('isRotationDomain', () => {
 describe('ROTATION_PRESETS', () => {
   it('exposes every preset except `custom`', () => {
     expect(ROTATION_PRESETS).toContain('tech');
-    expect(ROTATION_PRESETS).toContain('tech-zh');
+    expect(ROTATION_PRESETS).not.toContain('tech-zh'); // merged into `tech`
     expect(ROTATION_PRESETS).not.toContain('custom');
   });
 });
@@ -89,6 +90,18 @@ describe('resolveSlotDomain', () => {
     expect(first).toBe(rr);
   });
 
+  it('round-robin walks only the merged preset list (no tech-zh)', async () => {
+    // The cursor math is modulo the preset count; merging tech-zh into tech
+    // must not leave a dangling entry in the rotation list.
+    const env = envWith('round-robin');
+    const seen = new Set<string>();
+    for (let i = 0; i < ROTATION_PRESETS.length + 1; i++) {
+      seen.add(await resolveSlotDomain(env, stubDb(i), 'slot'));
+    }
+    expect(seen.has('tech-zh')).toBe(false);
+    expect(seen.has('tech')).toBe(true);
+  });
+
   it('random is slot-deterministic (retry-safe) and within the preset list', async () => {
     const env = envWith('random');
     const a = await resolveSlotDomain(env, stubDb(0), '2026-09-13T09');
@@ -101,5 +114,51 @@ describe('resolveSlotDomain', () => {
       picks.add(await resolveSlotDomain(env, stubDb(0), `slot-${i}`));
     }
     expect(picks.size).toBeGreaterThan(1);
+  });
+});
+
+describe('parseSchedule (NEWS_SCHEDULE)', () => {
+  it('returns an empty schedule when unset', () => {
+    expect(parseSchedule(undefined)).toEqual({});
+    expect(parseSchedule('')).toEqual({});
+  });
+
+  it('parses hour:tag pairs into a hour-keyed map', () => {
+    const s = parseSchedule('9:headlines,14:papers,20:trending');
+    expect(Object.keys(s).map(Number).sort((a, b) => a - b)).toEqual([9, 14, 20]);
+    expect(s[9].tag).toBe('headlines');
+    expect(s[9].mode).toBe('news');
+    expect(s[14].tag).toBe('papers');
+    expect(s[14].mode).toBe('papers');
+    expect(s[20].tag).toBe('trending');
+  });
+
+  it('assigns each tag its engine set', () => {
+    const s = parseSchedule('9:headlines,14:papers,20:trending');
+    // headlines → broad news engines (paid ones no-op without a key)
+    expect(s[9].newsEngines).toContain('gnews');
+    expect(s[9].newsEngines).toContain('rss');
+    expect(s[9].scholarEngines).toEqual([]);
+    // papers → scholar only
+    expect(s[14].newsEngines).toEqual([]);
+    expect(s[14].scholarEngines).toEqual(['arxiv', 'hf']);
+    // trending → hn only
+    expect(s[20].newsEngines).toEqual(['hn']);
+  });
+
+  it('skips malformed entries, out-of-range hours and unknown tags', () => {
+    const s = parseSchedule('9:headlines,abc,25:papers,4:banana,14:');
+    expect(s[9].tag).toBe('headlines');
+    expect(s[14]).toBeUndefined(); // no tag after colon
+    expect(s[25]).toBeUndefined(); // hour out of range
+    expect(s[4]).toBeUndefined(); // unknown tag
+  });
+
+  it('is tolerant of surrounding whitespace (no spaces around the colon — envList splits on whitespace)', () => {
+    // `hour:tag` is one token; envList splits on commas/whitespace, so the
+    // colon must stay glued to its hour and tag.
+    const s = parseSchedule('  9:headlines , 14:papers  ');
+    expect(s[9].tag).toBe('headlines');
+    expect(s[14].tag).toBe('papers');
   });
 });

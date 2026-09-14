@@ -126,14 +126,15 @@ LOG_ENABLED = "true"
 # src/features/digest/pipeline.ts resolves the content type per gate tick.
 # ---------------------------------------------------------------------------
 ENABLE_NEWS_DIGEST = "true"
-NEWS_DOMAIN = "tech"                # tech | tech-zh | finance | science | health | custom
+NEWS_DOMAIN = "tech"                # tech | finance | science | health | custom
+                                    # (`tech` spans western + Chinese sources)
 # Rotation (one preset per daily slot, recorded in the post's domain):
-#   round-robin (alias: all) — cycle tech -> tech-zh -> finance -> science -> health
+#   round-robin (alias: all) — cycle tech -> finance -> science -> health
 #   random — deterministic slot-keyed pick (retry-safe)
 # NEWS_DOMAIN = "round-robin"
 NEWS_MODE = "both"                  # news | papers | both
 NEWS_TARGET_CHAT_ID = "-100XXXXXXXXXX"  # channel/group id; bot must be an admin there
-NEWS_PUBLISH_HOURS = "9"            # local (TIMEZONE) hours for the daily digest
+NEWS_PUBLISH_HOURS = "9"            # local (TIMEZONE) hours; used only when NEWS_SCHEDULE is unset
 NEWS_LANGUAGE = "Arabic"
 NEWS_DIALECT = "Standard"           # optional dialect hint
 NEWS_AUTO_PUBLISH = "true"          # false = store drafts for review in the Digest tab
@@ -142,6 +143,13 @@ NEWS_MAX_ITEMS = "5"
 NEWS_MIN_POINTS = "25"              # HN quality threshold
 NEWS_FETCH_FULLTEXT = "false"       # snippet-only default (free-plan CPU/token budget)
 DIGEST_MAX_TOKENS = "3000"
+# Intraday schedule (plan §23.6): CSV of `hour:tag` slots that drive the hourly
+# gate. Each slot pins its own engines + LLM mode and tags its slot key, so a
+# single day can run several digests. Hours are local (TIMEZONE). Each `tag`:
+#   headlines -> gnews(+en & zh locales) + hn + rss + tavily/exa (if keys set)
+#   papers   -> arxiv + hf
+#   trending -> hn
+# NEWS_SCHEDULE = "9:headlines,14:papers,20:trending"
 # Digest LLM profile (DIGEST_MODEL -> TEXT_MODEL -> MODEL_NAME fallback).
 # Recommended for multilingual output (esp. Arabic): the multimodal gemma
 # model — set it explicitly so the digest does not inherit the text-only

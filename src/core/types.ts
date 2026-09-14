@@ -215,6 +215,20 @@ export interface Env {
   NEWS_REACTION_SIGNALS?: string;
   /** Optional sponsor footer line appended after sanitization (never LLM-generated). */
   NEWS_SPONSOR_TEXT?: string;
+  /**
+   * Intraday schedule: CSV of `hour:tag` slots that drive the hourly gate,
+   * e.g. "9:headlines,14:papers,20:trending". Hours are local (TIMEZONE). Each
+   * slot pins its own engines + LLM mode and tags its slot key so same-day
+   * slots don't collide. Unset = legacy single-daily-publish via
+   * NEWS_PUBLISH_HOURS (plan §23.6).
+   */
+  NEWS_SCHEDULE?: string;
+  /**
+   * Dev-only toggle (gitignored): 'true' enables POST /api/digest/dev/seed,
+   * which inserts a fake draft to exercise the review/edit/publish/discard
+   * workflow without running the pipeline. Always absent in production.
+   */
+  NEWS_DEV_SEED?: string;
   /** Tavily Search API key (secret) — enables the `tavily` news engine. */
   TAVILY_API_KEY?: string;
   /** Exa API key (secret) — enables the `exa` news engine. */
