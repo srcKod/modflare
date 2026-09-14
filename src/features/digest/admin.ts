@@ -490,7 +490,11 @@ async function handleDraftsRoute(request: Request, env: Env): Promise<Response> 
 }
 
 export const digestAdminRoutes: AdminRoute[] = [
+  // Registered for BOTH methods: GET lists/loads a draft, POST acts on it
+  // (save/publish/discard). The dispatch loop filters on method, so a single
+  // entry would make the other method fall through to 404.
   { method: 'GET', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
+  { method: 'POST', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
   // Dev-only seed (NEWS_DEV_SEED=true): insert a fake draft to exercise the
   // review/edit/publish/discard workflow without running the pipeline.
   {
