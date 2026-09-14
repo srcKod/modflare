@@ -410,6 +410,37 @@ function currentTab(){
   const t=new URLSearchParams(location.search).get('tab');
   return t==='bot-queue'||t==='settings'||t==='digest'?t:'audit';
 }
+/* ---- Digest toast + loading UX (§23.5) ---- */
+function dgToast(msg,kind){
+  const host=document.getElementById('dg-toast-host');
+  if(!host)return;
+  const t=document.createElement('div');
+  t.className='dg-toast dg-toast-'+(kind||'ok');
+  t.textContent=msg;
+  host.appendChild(t);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>t.classList.add('dg-toast-show')));
+  const ms=kind==='err'?5000:3000;
+  setTimeout(()=>{
+    t.classList.remove('dg-toast-show');
+    t.classList.add('dg-toast-hide');
+    setTimeout(()=>t.remove(),280);
+  },ms);
+}
+let dgLoading=0;          // refcount so nested loads share one spinner pass
+function dgSetLoading(btn,on){
+  if(on){
+    if(!btn.dataset.dgLabel)btn.dataset.dgLabel=btn.textContent;
+    dgLoading++;
+    btn.classList.add('dg-loading');
+    btn.textContent='Working…';
+  }else{
+    dgLoading=Math.max(0,dgLoading-1);
+    if(dgLoading===0){
+      btn.classList.remove('dg-loading');
+      if(btn.dataset.dgLabel){btn.textContent=btn.dataset.dgLabel;}
+    }
+  }
+}
 /* Digest filter state (applies to Published server-side; drafts client-side). */
 let dgPage=1;
 const DG_PER_PAGE=20;
@@ -468,13 +499,14 @@ function domainBadge(dm){return dm?'<span class="badge dg-domain-'+esc(dm)+'">'+
 async function loadDigest(){
   const notice=document.getElementById('dg-notice');
   const btn=document.getElementById('dg-refresh');
-  btn.disabled=true;
+  const warnNotice=(msg)=>{notice.hidden=false;notice.textContent=msg;dgToast(msg,'warn');};
+  dgSetLoading(btn,true);
   try{
     const r=await dgGet('/api/digest/drafts');
-    if(!r.ok){notice.hidden=false;notice.textContent='Digest API failed ('+r.status+').';return;}
+    if(!r.ok){warnNotice('Digest API failed ('+r.status+').');return;}
     const d=await r.json();
-    if(!d.enabled){notice.hidden=false;notice.textContent='Digest is disabled (ENABLE_NEWS_DIGEST != "true").';}
-    else if(d.auto_publish){notice.hidden=false;notice.textContent='Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.';}
+    if(!d.enabled){warnNotice('Digest is disabled (ENABLE_NEWS_DIGEST != "true").');}
+    else if(d.auto_publish){warnNotice('Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.');}
     else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
     const drafts=(d.rows||[]).filter(x=>x.status==='draft');
     const f=dgFilterParams();
@@ -503,7 +535,7 @@ async function loadDigest(){
     const sr=await dgGet('/api/digest/stats?'+sp);
     const spub=document.getElementById('dg-published');
     const sstat=document.getElementById('dg-stats');
-    if(!sr.ok){notice.hidden=false;notice.textContent='Digest stats failed ('+sr.status+').';spub.innerHTML='<tr class="error"><td colspan="8">Failed to load.</td></tr>';return;}
+    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="error"><td colspan="9">Failed to load.</td></tr>';return;}
     const st=await sr.json();
     const sm=st.summary||{};
     sstat.innerHTML=
@@ -525,12 +557,13 @@ async function loadDigest(){
         '<td>'+typeBadge(p.type)+'</td>'+
         '<td>'+domainBadge(p.domain)+'</td>'+
         '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
-        '<td class="mono">'+(a&&a.total!=null?esc(a.total):'—')+rxChips(a&&a.breakdown,st.signal_map)+'</td>'+
+        '<td class="mono col-rx-count">'+(a&&a.total!=null?esc(a.total):'—')+'</td>'+
+        '<td class="col-rx">'+(a&&a.breakdown?rxChips(a.breakdown,st.signal_map):'<span class="mono">—</span>')+'</td>'+
         '<td class="mono">'+trendChip(a)+'</td>'+
         '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
         '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
       '</tr>';
-    }).join(''):'<tr class="empty"><td colspan="8">Nothing published yet.</td></tr>';
+    }).join(''):'<tr class="empty"><td colspan="9">Nothing published yet.</td></tr>';
     document.getElementById('dg-page-info').textContent=
       'Page '+dgPage+' · '+(st.posts||[]).length+' of '+st.total+(st.has_more?' (more)':'');
     document.getElementById('dg-prev').disabled=dgPage<=1;
@@ -540,11 +573,13 @@ async function loadDigest(){
     if(setr.ok){
       document.getElementById('dg-settings').innerHTML=kvTable(await setr.json());
     }
+    dgToast('Digest refreshed.','ok');
   }catch(err){
-    notice.hidden=false;
-    notice.textContent='Digest load failed: '+(err&&err.message||err);
+    const msg='Digest load failed: '+(err&&err.message||err);
+    notice.hidden=false;notice.textContent=msg;
+    dgToast(msg,'err');
   }finally{
-    btn.disabled=false;
+    dgSetLoading(btn,false);
   }
 }
 /* Editor */
@@ -641,11 +676,17 @@ document.getElementById('dg-refresh').addEventListener('click',()=>{
   loadDigest();
 });
 document.getElementById('dg-run').addEventListener('click',async()=>{
+  const btn=document.getElementById('dg-run');
   const info=document.getElementById('dg-run-info');
+  dgSetLoading(btn,true);
   info.textContent='Running gate… (gather + LLM, can take up to a minute)';
-  const r=await dgPost('/api/digest/run');
-  const d=await r.json().catch(()=>({}));
-  info.textContent=r.ok?('Done — '+d.note):('Failed: '+r.status);
+  try{
+    const r=await dgPost('/api/digest/run');
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){dgToast('Digest run started — refresh in a moment.','ok');info.textContent='Run started.';}
+    else{const m='Run failed: '+(d.error||r.status);dgToast(m,'err');info.textContent=m;}
+  }catch(err){const m='Run failed: '+(err&&err.message||err);dgToast(m,'err');info.textContent=m;}
+  finally{dgSetLoading(btn,false);}
   loadDigest();
 });
 

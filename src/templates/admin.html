@@ -73,6 +73,7 @@
     </div>
   </section>
   <section id="tab-digest" hidden>
+    <div id="dg-toast-host" class="dg-toast-host"></div>
     <div class="notice" id="dg-notice" hidden></div>
     <div class="stats" id="dg-stats"></div>
     <div class="filters">
@@ -144,9 +145,9 @@
     <div class="table-wrap">
     <table class="dg-table">
       <thead><tr>
-        <th>Title</th><th>Type</th><th>Domain</th><th>Published (UTC)</th><th>Reactions</th><th>Trend</th><th>Message</th><th>Edited</th>
+        <th>Title</th><th>Type</th><th>Domain</th><th>Published (UTC)</th><th class="col-rx-count">Reactions</th><th>Breakdown</th><th>Trend</th><th>Message</th><th>Edited</th>
       </tr></thead>
-      <tbody id="dg-published"><tr class="empty"><td colspan="8">Loading…</td></tr></tbody>
+      <tbody id="dg-published"><tr class="empty"><td colspan="9">Nothing published yet.</td></tr></tbody>
     </table>
     <div class="pagination">
       <button id="dg-prev">‹ Prev</button>

@@ -267,6 +267,22 @@ table{min-width:760px}
 .badge.dg-domain-science{background:#ede9fe;color:#6d28d9}
 .badge.dg-domain-health{background:#ffe4e6;color:#be123c}
 .dg-table .secondary{font-size:.66rem;color:var(--muted)}
+/* Published table: the count column (numeric) and the breakdown (emoji pills). */
+.col-rx-count{width:52px}
+.col-rx{min-width:96px}
+/* Refresh/run loading state: animated spinner injected via ::before. */
+.dg-loading{position:relative;padding-left:24px;pointer-events:none;opacity:.78}
+.dg-loading::before{content:'';position:absolute;left:8px;top:50%;margin-top:-7px;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:dg-spin .7s linear infinite}
+@keyframes dg-spin{to{transform:rotate(360deg)}}
+/* Toast stack: fixed top-right, auto-dismiss; colour by kind. */
+.dg-toast-host{position:fixed;top:14px;right:14px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.dg-toast{padding:9px 16px;border-radius:8px;font-size:.83rem;font-weight:500;color:#fff;background:#374151;box-shadow:0 6px 18px rgba(0,0,0,.2);min-width:180px;max-width:340px;pointer-events:auto;
+  transform:translateX(24px);opacity:0;transition:transform .25s ease,opacity .25s ease}
+.dg-toast-show{transform:none;opacity:1}
+.dg-toast-hide{opacity:0;transform:translateX(24px)}
+.dg-toast-ok{background:#15803d}
+.dg-toast-warn{background:#b45309}
+.dg-toast-err{background:#b91c1c}
 
 /* Narrow screens: stack filters, shrink paddings, hide less-critical columns. */
 @media (max-width:720px){
