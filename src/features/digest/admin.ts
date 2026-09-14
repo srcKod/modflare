@@ -231,16 +231,32 @@ async function handleDigestSeed(env: Env): Promise<Response> {
   }
   const slot = `dev-seed-${Date.now()}`;
   const title = '[dev] Sample digest — ملخص تجريبي';
+  // Body mirrors a real pipeline digest exactly: each item has an inline
+  // <a href="url">Source</a> link after the summary, em-dash separators, and
+  // a "— · N مصادر" footer. URLs below are stable public pages so the draft
+  // exercises the same HTML shape (and link targets) as a live post.
+  const src: { url: string; source: string }[] = [
+    { url: 'https://huggingface.co/papers/2609.11115', source: 'Hugging Face' },
+    { url: 'https://huggingface.co/papers/2609.12641', source: 'Hugging Face' },
+    { url: 'https://huggingface.co/papers/2609.10016', source: 'Hugging Face' },
+    { url: 'https://news.google.com/rss/articles/CBMimAFBVV95cUxOTjk0Z2I2Nnh4MktjOVV4QTdLSHk5STJaLXozZXltWUFGN2ZUNzJ0Sm9QQ1dpX3ZVT05rWXhTLWYwenRCVWVaOGlzWENfOVlVakhwS1NEVVphaFVENmlMWWF6eUVhUjZGUTNNLWVxVUVJRXhyR0xtVl9xVkw3amw0UlNSMjB1cW9fbEtCbkUtRkMyZTFQWUJ0Zg?oc=5', source: 'The Motley Fool' },
+    { url: 'https://arxiv.org/abs/2026.00000', source: 'arXiv' },
+  ];
+  const items = [
+    'Benchmark Radar: قاعدة بيانات حية لتقييم نماذج الذكاء الاصطناعي — نظام جديد يعمل كمحرك بحث وقاعدة بيانات شاملة لتسهيل اكتشاف ومعايرة مقاييس أداء نماذج اللغة الكبيرة.',
+    'تطوير نماذج الروبوتات الأساسية عبر تدريب الواجهة الكامنة — إطار عمل جديد يهدف إلى تحسين قدرة الروبوتات على التعميم وتقليل الاعتماد على الإشارات البصرية غير ذات الصلة.',
+    'MetroLLM-Bench: اختبار النماذج اللغوية في أنظمة النقل — معيار تقييم جديد يختبر قدرة النماذج اللغوية على العمل كأنظمة تشغيل لأكشاك خدمات المترو.',
+    'الأمن السيبراني كوجهة استثمارية كبرى للذكاء الاصطناعي — تصريحات تشير إلى أن الأمن السيبراني سيمثل السوق القادم والأكبر لتقنيات الذكاء الاصطناعي.',
+    'نمو مستدام لشركات الأمن السيبراني السحابي — تحليل يشير إلى تموضع الشركات التي تدمج بين الأمن السيبراني للسحابة والذكاء الاصطناعي لتحقيق نمو مستدام.',
+  ];
   const body = [
-    '📰 <b>مراجعة الذكاء الاصطناعي — ملخص تجريبي</b>',
+    '📰 <b>أبرز مستجدات التكنولوجيا والذكاء الاصطناعي</b>',
     '',
-    '• <b>نموذج لغوي جديد يُحسن الاستدلال متعدد الخطوات</b> — ملخص موجز من سطرين يلخّص التحسين المُعلن مع الحفاظ على الحقائق ودون مبالغة، ويُظهر كيف تبدو بطاقة الخبر داخل المسودة.',
-    '<a href="s1">المصدر</a>',
-    '',
-    '• <b>ورقة روبوتات: تعلّم المحاكاة إلى العالم الحقيقي</b> — نقل السياسات من المحاكاة إلى الواقع مع تقليل الفجوة بنسبة ملحوظة على مهام الإمساك الدقيق.',
-    '<a href="s2">arXiv</a>',
-    '',
-    '— · مصادر تجريبية',
+    ...items.flatMap((text, i) => [
+      `• <b>${text}</b> <a href="${src[i].url}">${src[i].source}</a>`,
+      '',
+    ]),
+    `— · ${items.length} مصادر`,
   ].join('\n');
 
   const insert = await env.DB
@@ -266,18 +282,16 @@ async function handleDigestSeed(env: Env): Promise<Response> {
     .run();
   const postId = insert.meta.last_row_id as number | undefined;
 
-  // A couple of placeholder items so the draft has source rows too.
-  const items = [
-    { url: 'https://example.com/ai-reasoning', title: 'نموذج لغوي جديد يُحسن الاستدلال' },
-    { url: 'https://arxiv.org/abs/2026.00000', title: 'ورقة روبوتات: محاكاة إلى عالم حقيقي' },
-  ];
-  for (const it of items) {
+  // Source rows mirror the inline links in the body above (same URLs), so the
+  // draft's digest_items table matches a real run's shape.
+  for (const s of src) {
+    const url = s.url;
     await env.DB
       .prepare(
         `INSERT OR IGNORE INTO digest_items (url_hash, url, title, source, digest_post_id)
          VALUES (?, ?, ?, ?, ?)`,
       )
-      .bind(sha256Hex(normalizeUrl(it.url)), it.url, it.title.slice(0, 300), domainOf(it.url) || 'example.com', postId ?? null)
+      .bind(sha256Hex(normalizeUrl(url)), url, s.source.slice(0, 300), domainOf(url) || s.source, postId ?? null)
       .run();
   }
 
