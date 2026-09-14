@@ -17,6 +17,7 @@ import {
   parseReactionSignals,
   isRotationDomain,
   parseSchedule,
+  isSeedEnabled,
 } from './config';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
@@ -219,7 +220,7 @@ async function handleDigestAction(
  * never run in production. Idempotent per call — each click makes a new draft.
  */
 async function handleDigestSeed(env: Env): Promise<Response> {
-  if ((env.NEWS_DEV_SEED || '').trim().toLowerCase() !== 'true') {
+  if (!isSeedEnabled(env.NEWS_DEV_SEED)) {
     return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true to enable)' }, 404);
   }
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);

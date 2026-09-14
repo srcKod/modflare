@@ -343,3 +343,13 @@ export function resolveDigestConfig(
   };
 }
 
+/**
+ * Is the dev seed toggle on? Coerces to string because the var may arrive as
+ * either a quoted string ("true") or an unquoted boolean (true) depending on
+ * how it was set in wrangler.toml — calling `.trim()` on the raw boolean
+ * throws, which is exactly the 500 the unquoted form produced.
+ */
+export function isSeedEnabled(seed: string | boolean | undefined): boolean {
+  return String(seed || '').trim().toLowerCase() === 'true';
+}
+
