@@ -313,6 +313,23 @@ async function loadHistory(
 /* Pipeline                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * RTL line marks: for output languages like Arabic, prepend U+200F (RLM) to
+ * every line that contains RTL characters so Telegram renders the paragraph
+ * right-to-left even when the line mixes in English titles or URLs. Pure
+ * left-to-right lines are left untouched (content-based detection — no
+ * language flag needed). Applied after sanitize so drafts, published posts,
+ * and the editor preview render identically.
+ */
+const RTL_CHAR_RE = /[\u0591-\u07FF\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
+function applyRtlMarks(body: string): string {
+  return body
+    .split('\n')
+    .map((line) => (RTL_CHAR_RE.test(line) ? '\u200F' + line : line))
+    .join('\n');
+}
+
 async function runDigest(
   env: Env,
   cfg: DigestConfig,
@@ -452,7 +469,8 @@ async function runDigest(
   }
 
   // Sanitize + sponsor footer (appended post-sanitize, never LLM-generated).
-  let body = sanitizeTelegramHtml(parsed.post);
+  // RTL marks last: every stored/rendered form of the body is consistent.
+  let body = applyRtlMarks(sanitizeTelegramHtml(parsed.post));
   if (cfg.sponsorText) {
     const sponsor = cfg.sponsorText
       .replace(/&/g, '&amp;')

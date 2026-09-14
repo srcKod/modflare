@@ -138,6 +138,11 @@ NEWS_MAX_ITEMS = "5"
 NEWS_MIN_POINTS = "25"              # HN quality threshold
 NEWS_FETCH_FULLTEXT = "false"       # snippet-only default (free-plan CPU/token budget)
 DIGEST_MAX_TOKENS = "3000"
+# Digest LLM profile (DIGEST_MODEL -> TEXT_MODEL -> MODEL_NAME fallback).
+# Recommended for multilingual output (esp. Arabic): the multimodal gemma
+# model — set it explicitly so the digest does not inherit the text-only
+# glm model:
+# DIGEST_MODEL = "workers-ai/@cf/google/gemma-4-26b-a4b-it"
 # DIGEST_BASE_URL / DIGEST_API_KEY -> run the digest on its own LLM provider
 #   (falls back to OPENAI_BASE_URL / OPENAI_API_KEY). DIGEST_MODEL /
 #   DIGEST_EXTRA_BODY_JSON / DIGEST_RESPONSE_FORMAT / DIGEST_TIMEOUT_MS likewise.

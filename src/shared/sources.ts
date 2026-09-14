@@ -189,13 +189,26 @@ async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<void
     const summary = tagText(entry, 'summary').replace(/\s+/g, ' ');
     const id = tagText(entry, 'id');
     if (!title || !id) continue;
+    // Papers get rich context: full abstract + authors + primary category
+    // (the LLM summarizes; truncation here was why paper digests felt thin).
+    const authors = (entry.match(/<name>([\s\S]*?)<\/name>/g) ?? [])
+      .map((m) => m.replace(/<\/?name>/g, '').trim())
+      .filter(Boolean);
+    const cat =
+      /<arxiv:primary_category[^>]*term="([^"]+)"/.exec(entry)?.[1] ??
+      /<category[^>]*term="([^"]+)"/.exec(entry)?.[1] ??
+      '';
+    const who = authors.length
+      ? 'Authors: ' + authors.slice(0, 4).join(', ') + (authors.length > 4 ? ' et al.' : '') + ' · '
+      : '';
+    const catPart = cat ? '[' + cat + '] ' : '';
     out.push({
       tag: 'papers',
       title,
       url: id,
       source: 'arXiv',
       date: tagText(entry, 'published'),
-      snippet: summary.slice(0, 300),
+      snippet: (catPart + who + summary).replace(/\s+/g, ' ').slice(0, 1200),
     });
   }
 }
@@ -222,7 +235,7 @@ async function engineHfPapers(out: DigestCandidate[]): Promise<void> {
       url: `https://huggingface.co/papers/${id}`,
       source: 'Hugging Face',
       score: p.paper?.upvotes,
-      snippet: (p.paper?.summary ?? '').replace(/\s+/g, ' ').slice(0, 300),
+      snippet: (p.paper?.summary ?? '').replace(/\s+/g, ' ').slice(0, 1200),
     });
   }
 }

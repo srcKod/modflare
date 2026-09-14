@@ -160,7 +160,7 @@ export interface Env {
   /** Comma-separated topic queries. Overrides the preset. */
   NEWS_TOPICS?: string;
   /**
-   * News engine override: gnews | hn | rss | tavily | exa | ddg.
+   * News engine override: gnews | hn | rss | tavily | exa.
    * Default: the preset's engine list. Comma list = additive engines.
    */
   NEWS_ENGINE?: string;
