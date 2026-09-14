@@ -86,8 +86,76 @@ const DOMAIN_PRESETS: Record<string, DomainPreset> = {
   },
 };
 
+/* ------------------------------------------------------------------ */
+/* Multi-domain rotation (plan §23.1)                                  */
+/* ------------------------------------------------------------------ */
+
+/** Rotation strategies accepted by NEWS_DOMAIN (alias: 'all' = round-robin). */
+const ROTATION_STRATEGIES = ['round-robin', 'random', 'all'];
+/** Presets eligible for rotation — everything except `custom`, which needs
+ * explicit NEWS_TOPICS and is never picked automatically. */
+export const ROTATION_PRESETS = Object.keys(DOMAIN_PRESETS).filter(
+  (d) => d !== 'custom',
+);
+
+/** True when NEWS_DOMAIN holds a rotation strategy rather than a preset. */
+export function isRotationDomain(value: string): boolean {
+  return ROTATION_STRATEGIES.includes((value || '').trim().toLowerCase());
+}
+
+/* ------------------------------------------------------------------ */
+/* Reaction sentiment mapping (plan §23.2)                             */
+/* ------------------------------------------------------------------ */
+
+export type ReactionClass = 'pos' | 'neg';
+
+/** Built-in sentiment classes; everything else is neutral. Config adds to
+ * (or overrides) these — never replaces, so a typo doesn't lose the basics. */
+const DEFAULT_REACTION_SIGNALS: Record<string, ReactionClass> = {
+  '\u{1F44D}': 'pos', // 👍
+  '\u{2764}\u{FE0F}': 'pos', // ❤️
+  '\u{1F525}': 'pos', // 🔥
+  '\u{1F389}': 'pos', // 🎉
+  '\u{1F44F}': 'pos', // 👏
+  '\u{2764}': 'pos', // ❤ (without variation selector)
+  '\u{1F44E}': 'neg', // 👎
+};
+
+/**
+ * Parse NEWS_REACTION_SIGNALS: comma-separated `emoji:class` pairs
+ * (class = 'pos' | 'neg'; any other class on a pair is ignored). Merged
+ * over the defaults. Unmapped emojis stay neutral (capture-all principle:
+ * raw breakdown is always stored; classification is presentation-time).
+ */
+export function parseReactionSignals(
+  raw: string | undefined,
+): Record<string, ReactionClass> {
+  const map: Record<string, ReactionClass> = { ...DEFAULT_REACTION_SIGNALS };
+  for (const part of envList(raw)) {
+    const i = part.lastIndexOf(':');
+    if (i <= 0) continue;
+    const emoji = part.slice(0, i).trim();
+    const cls = part.slice(i + 1).trim().toLowerCase();
+    if (!emoji) continue;
+    if (cls === 'pos' || cls === 'neg') map[emoji] = cls;
+    else if (cls === 'neutral' || cls === 'neu') delete map[emoji];
+  }
+  return map;
+}
+
+/** Resolved rotation: strategy + the preset list it cycles/picks from. */
+export interface DigestRotation {
+  strategy: 'round-robin' | 'random';
+  presets: string[];
+}
+
 export interface DigestConfig {
+  /** Configured NEWS_DOMAIN value (preset name or rotation strategy). */
   domain: string;
+  /** Rotation when NEWS_DOMAIN is a strategy value; null for fixed presets. */
+  rotation: DigestRotation | null;
+  /** Domain that produced this config (fixed preset, or the rotation pick). */
+  effectiveDomain: string;
   mode: DigestMode;
   topics: string[];
   newsEngines: string[];
@@ -126,8 +194,22 @@ export interface DigestConfig {
 }
 
 
-export function resolveDigestConfig(env: Env): DigestConfig {
-  const domain = (env.NEWS_DOMAIN || 'tech').trim();
+export function resolveDigestConfig(
+  env: Env,
+  /** Rotation pick — overrides NEWS_DOMAIN when it holds a strategy value. */
+  effectiveDomain?: string,
+): DigestConfig {
+  const configured = (env.NEWS_DOMAIN || 'tech').trim();
+  const lower = configured.toLowerCase();
+  // Rotation values share the preset slot: strategy lives in the value, the
+  // domain is decided per-run in the pipeline (needs D1 for the cursor).
+  const rotation: DigestRotation | null = isRotationDomain(configured)
+    ? {
+        strategy: lower === 'random' ? 'random' : 'round-robin',
+        presets: ROTATION_PRESETS,
+      }
+    : null;
+  const domain = effectiveDomain ?? (rotation ? 'tech' : configured);
   const preset = DOMAIN_PRESETS[domain] ?? DOMAIN_PRESETS.tech;
   const modeRaw = (env.NEWS_MODE || 'news').trim() as DigestMode;
   const mode: DigestMode = ['news', 'papers', 'both'].includes(modeRaw)
@@ -147,7 +229,9 @@ export function resolveDigestConfig(env: Env): DigestConfig {
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 23);
 
   return {
-    domain,
+    domain: configured,
+    rotation,
+    effectiveDomain: domain,
     mode,
     topics,
     newsEngines: engines,

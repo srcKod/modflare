@@ -81,6 +81,24 @@
       <span class="info" id="dg-run-info"></span>
     </div>
 
+    <div class="filters" id="dg-filters">
+      <select id="dg-f-domain" title="Filter by content domain (All = every domain, incl. rotation runs)"><option value="all">domain: all</option></select>
+      <select id="dg-f-type" title="Filter by digest type">
+        <option value="">type: all</option><option>daily</option><option>weekly</option><option>monthly</option>
+      </select>
+      <input id="dg-f-from" type="date" style="width:125px" title="Published from (UTC)">
+      <input id="dg-f-to" type="date" style="width:125px" title="Published to (UTC, inclusive)">
+      <input id="dg-f-minrx" type="number" min="0" placeholder="min reactions" style="width:110px" title="Minimum reactions">
+      <select id="dg-f-trend" title="Filter by reaction trend (~24h windowed delta)">
+        <option value="">trend: all</option>
+        <option value="up">📈 up</option>
+        <option value="flat">➖ flat</option>
+        <option value="down">📉 down</option>
+        <option value="new">new</option>
+      </select>
+      <button id="dg-apply">Apply</button>
+    </div>
+
     <div class="dg-editor" id="dg-editor" hidden>
       <div class="dg-editor-head">
         <strong id="dg-editor-title"></strong>
@@ -116,9 +134,9 @@
     <div class="table-wrap">
     <table class="dg-table">
       <thead><tr>
-        <th>Slot</th><th>Type</th><th>Title</th><th>Preview</th><th>Run (UTC)</th><th>Size</th><th>Actions</th>
+        <th>Slot</th><th>Type</th><th>Domain</th><th>Title</th><th>Preview</th><th>Run (UTC)</th><th>Size</th><th>Actions</th>
       </tr></thead>
-      <tbody id="dg-drafts"><tr class="empty"><td colspan="7">Loading…</td></tr></tbody>
+      <tbody id="dg-drafts"><tr class="empty"><td colspan="8">Loading…</td></tr></tbody>
     </table>
     </div>
 
@@ -126,14 +144,19 @@
     <div class="table-wrap">
     <table class="dg-table">
       <thead><tr>
-        <th>Title</th><th>Type</th><th>Published (UTC)</th><th>Reactions</th><th>Message</th><th>Edited</th>
+        <th>Title</th><th>Type</th><th>Domain</th><th>Published (UTC)</th><th>Reactions</th><th>Trend</th><th>Message</th><th>Edited</th>
       </tr></thead>
-      <tbody id="dg-published"><tr class="empty"><td colspan="6">Loading…</td></tr></tbody>
+      <tbody id="dg-published"><tr class="empty"><td colspan="8">Loading…</td></tr></tbody>
     </table>
+    <div class="pagination">
+      <button id="dg-prev">‹ Prev</button>
+      <span class="info" id="dg-page-info"></span>
+      <button id="dg-next">Next ›</button>
+    </div>
     </div>
 
     <h3 class="dg-h">Resolved settings</h3>
-    <details class="dg-settings"><summary>show</summary><pre id="dg-settings">…</pre></details>
+    <details class="dg-settings"><summary>show</summary><div id="dg-settings" class="dg-kv">…</div></details>
   </section>
   <section id="tab-settings" hidden>
     <div class="notice" id="st-notice" hidden></div>

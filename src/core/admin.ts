@@ -229,7 +229,12 @@ function base64urlDecode(s: string): string {
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      // Admin panels must reflect deploys and new writes immediately; without
+      // this the browser heuristically caches GETs (stale Refresh, plan §23.4).
+      'Cache-Control': 'no-store',
+    },
   });
 }
 

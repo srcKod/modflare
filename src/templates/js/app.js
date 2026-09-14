@@ -410,73 +410,153 @@ function currentTab(){
   const t=new URLSearchParams(location.search).get('tab');
   return t==='bot-queue'||t==='settings'||t==='digest'?t:'audit';
 }
+/* Digest filter state (applies to Published server-side; drafts client-side). */
+let dgPage=1;
+const DG_PER_PAGE=20;
+function dgFilterParams(){
+  const p=new URLSearchParams();
+  const g=(id)=>document.getElementById(id).value;
+  const domain=g('dg-f-domain');if(domain&&domain!=='all')p.set('domain',domain);
+  if(g('dg-f-type'))p.set('type',g('dg-f-type'));
+  if(g('dg-f-from'))p.set('from',g('dg-f-from'));
+  if(g('dg-f-to'))p.set('to',g('dg-f-to'));
+  if(g('dg-f-minrx'))p.set('min_reactions',g('dg-f-minrx'));
+  if(g('dg-f-trend'))p.set('trend',g('dg-f-trend'));
+  return p;
+}
+/** GET with no-store: Refresh must never serve a cached response (§23.4). */
+async function dgGet(path){
+  return await fetch(base+path,{cache:'no-store'});
+}
+/** Emoji pills from a breakdown map, tinted by sentiment class. */
+function rxChips(breakdown,signals){
+  const entries=Object.entries(breakdown||{}).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length)return '<span class="mono">0</span>';
+  return '<div class="rx-wrap">'+entries.map(([e,c])=>{
+    const cls=signals&&signals[e]==='neg'?' rx-neg':(signals&&signals[e]==='pos'?' rx-pos':'');
+    return '<span class="rx-chip'+cls+'" title="'+esc(e)+'">'+esc(e)+' '+esc(c)+'</span>';
+  }).join('')+'</div>';
+}
+/** Windowed-delta arrow + age-normalized velocity (reactions/hour). */
+function trendChip(a){
+  if(!a||a.total==null)return '<span class="mono">—</span>';
+  const map={up:'\u{1F4C8}',down:'\u{1F4C9}',flat:'➖',new:'·'};
+  const arrow=map[a.trend||'new']||'·';
+  const delta=a.trend_delta!=null&&a.trend_delta!==0
+    ?(' '+(a.trend_delta>0?'+':'')+a.trend_delta):'';
+  const cls='trend-'+(a.trend||'new');
+  return '<span class="'+cls+'" title="reactions since ~24h ago">'+arrow+esc(delta)+'</span>'+
+    (a.velocity!=null?'<div class="secondary">'+esc(a.velocity)+'/h</div>':'');
+}
+/** Flatten a settings object into key/value rows (arrays joined, nested dotted). */
+function kvRows(obj,prefix,out){
+  out=out||[];
+  for(const[k,v]of Object.entries(obj||{})){
+    const key=prefix?prefix+'.'+k:k;
+    if(v&&typeof v==='object'&&!Array.isArray(v)){kvRows(v,key,out);}
+    else if(Array.isArray(v)){out.push([key,v.length?v.join(', '):'—']);}
+    else if(v&&typeof v==='object')out.push([key,'—']);
+    else out.push([key,v==null||v===''?'—':String(v)]);
+  }
+  return out;
+}
+function kvTable(obj){
+  return '<table class="kv">'+kvRows(obj,'',[]).map(([k,v])=>
+    '<tr><td class="k">'+esc(k)+'</td><td class="v">'+esc(v)+'</td></tr>').join('')+'</table>';
+}
+function domainBadge(dm){return dm?'<span class="badge dg-domain-'+esc(dm)+'">'+esc(dm)+'</span>':'<span class="mono">—</span>';}
 async function loadDigest(){
   const notice=document.getElementById('dg-notice');
-  const r=await fetch(base+'/api/digest/drafts');
-  if(!r.ok){notice.hidden=false;notice.textContent='Digest API failed ('+r.status+').';return;}
-  const d=await r.json();
-  if(!d.enabled){notice.hidden=false;notice.textContent='Digest is disabled (ENABLE_NEWS_DIGEST != "true").';}
-  else if(d.auto_publish){notice.hidden=false;notice.textContent='Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.';}
-  else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
-  const drafts=(d.rows||[]).filter(x=>x.status==='draft');
-  const others=(d.rows||[]).filter(x=>x.status!=='draft');
-  const tbody=document.getElementById('dg-drafts');
-  if(!drafts.length){tbody.innerHTML='<tr class="empty"><td colspan="7">No pending drafts.</td></tr>';}
-  else{
-    tbody.innerHTML=drafts.map(row=>'<tr>'+
-      '<td class="mono">'+esc(row.slot_key)+'</td>'+
-      '<td>'+typeBadge(row.type)+'</td>'+
-      '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
-      '<td><div class="reason">'+esc(row.preview||'')+'</div></td>'+
-      '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
-      '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
-      '<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>'+
-    '</tr>').join('');
-    tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));
-  }
-  // Published + stats via /api/digest/stats
-  const sr=await fetch(base+'/api/digest/stats');
-  const spub=document.getElementById('dg-published');
-  const sstat=document.getElementById('dg-stats');
-  if(!sr.ok){spub.innerHTML='<tr class="error"><td colspan="6">Stats failed</td></tr>';return;}
-  const st=await sr.json();
-  const tot=(st.posts||[]).reduce((a,p)=>a+(p.reactions||0),0);
-  const best=(st.posts||[]).reduce((a,p)=>(p.reactions||0)>(a?.reactions||0)?p:a,null);
-  sstat.innerHTML=
-    '<div class="stat"><div class="num">'+(st.posts||[]).length+'</div><div class="lbl">Published</div></div>'+
-    '<div class="stat"><div class="num">'+drafts.length+'</div><div class="lbl">Pending drafts</div></div>'+
-    '<div class="stat"><div class="num">'+tot+'</div><div class="lbl">Total reactions</div></div>'+
-    '<div class="stat"><div class="num">'+(best?esc(best.reactions):'—')+'</div><div class="lbl">Best post</div></div>';
-  spub.innerHTML=(st.posts||[]).length?st.posts.map(p=>{
-    let rl='';
-    try{const j=JSON.parse(p.reactions_json||'{}');
-      rl=Object.entries(j).sort((a,b)=>b[1]-a[1]).slice(0,3)
-        .map(([e,c])=>esc(e)+' '+c).join(' · ');
-    }catch{}
-    return '<tr>'+
-      '<td><div class="primary">'+esc(p.title||'—')+'</div></td>'+
-      '<td>'+typeBadge(p.type)+'</td>'+
-      '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
-      '<td class="mono">'+(p.reactions!=null?esc(p.reactions):'—')+(rl?'<div class="secondary">'+rl+'</div>':'')+'</td>'+
-      '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
-      '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
-    '</tr>';
-  }).join(''):'<tr class="empty"><td colspan="6">Nothing published yet.</td></tr>';
-  // Settings
-  const setr=await fetch(base+'/api/digest/settings');
-  if(setr.ok){
-    document.getElementById('dg-settings').textContent=JSON.stringify(await setr.json(),null,2);
+  const btn=document.getElementById('dg-refresh');
+  btn.disabled=true;
+  try{
+    const r=await dgGet('/api/digest/drafts');
+    if(!r.ok){notice.hidden=false;notice.textContent='Digest API failed ('+r.status+').';return;}
+    const d=await r.json();
+    if(!d.enabled){notice.hidden=false;notice.textContent='Digest is disabled (ENABLE_NEWS_DIGEST != "true").';}
+    else if(d.auto_publish){notice.hidden=false;notice.textContent='Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.';}
+    else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
+    const drafts=(d.rows||[]).filter(x=>x.status==='draft');
+    const f=dgFilterParams();
+    const fDomain=f.get('domain'),fType=f.get('type');
+    const shownDrafts=drafts.filter(x=>
+      (!fDomain||(x.domain||'')===fDomain)&&(!fType||x.type===fType));
+    const tbody=document.getElementById('dg-drafts');
+    if(!shownDrafts.length){
+      tbody.innerHTML='<tr class="empty"><td colspan="8">'+
+        (drafts.length?'No drafts match the filters.':'No pending drafts.')+'</td></tr>';
+    }else{
+      tbody.innerHTML=shownDrafts.map(row=>'<tr>'+
+        '<td class="mono">'+esc(row.slot_key)+'</td>'+
+        '<td>'+typeBadge(row.type)+'</td>'+
+        '<td>'+domainBadge(row.domain)+'</td>'+
+        '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
+        '<td><div class="reason">'+esc(row.preview||'')+'</div></td>'+
+        '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
+        '<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>'+
+      '</tr>').join('');
+      tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));
+    }
+    // Published (filtered + paginated) via /api/digest/stats
+    const sp=new URLSearchParams(f);sp.set('page',dgPage);sp.set('per_page',DG_PER_PAGE);
+    const sr=await dgGet('/api/digest/stats?'+sp);
+    const spub=document.getElementById('dg-published');
+    const sstat=document.getElementById('dg-stats');
+    if(!sr.ok){notice.hidden=false;notice.textContent='Digest stats failed ('+sr.status+').';spub.innerHTML='<tr class="error"><td colspan="8">Failed to load.</td></tr>';return;}
+    const st=await sr.json();
+    const sm=st.summary||{};
+    sstat.innerHTML=
+      '<div class="stat"><div class="num">'+(sm.published||0)+'</div><div class="lbl">Published (filtered)</div></div>'+
+      '<div class="stat"><div class="num">'+drafts.length+'</div><div class="lbl">Pending drafts</div></div>'+
+      '<div class="stat"><div class="num">'+(sm.reactions||0)+'</div><div class="lbl">Total reactions</div></div>'+
+      '<div class="stat"><div class="num">'+((sm.pos||0)-(sm.neg||0))+'</div><div class="lbl">Net sentiment</div></div>'+
+      '<div class="stat"><div class="num" title="'+esc(sm.best&&sm.best.title||'')+'">'+(sm.best!=null?esc(sm.best.reactions):'—')+'</div><div class="lbl">Best post</div></div>';
+    // Domain filter options = union of published + draft domains (keep selection).
+    const fd=document.getElementById('dg-f-domain');
+    const sel=fd.value||'all';
+    const doms=[...new Set([...(st.domains||[]),...drafts.map(x=>x.domain).filter(Boolean)])].sort();
+    fd.innerHTML='<option value="all">domain: all</option>'+doms.map(x=>'<option>'+esc(x)+'</option>').join('');
+    if(doms.includes(sel))fd.value=sel;
+    spub.innerHTML=(st.posts||[]).length?st.posts.map(p=>{
+      const a=p.analytics;
+      return '<tr>'+
+        '<td><div class="primary">'+esc(p.title||'—')+'</div></td>'+
+        '<td>'+typeBadge(p.type)+'</td>'+
+        '<td>'+domainBadge(p.domain)+'</td>'+
+        '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+(a&&a.total!=null?esc(a.total):'—')+rxChips(a&&a.breakdown,st.signal_map)+'</td>'+
+        '<td class="mono">'+trendChip(a)+'</td>'+
+        '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
+        '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
+      '</tr>';
+    }).join(''):'<tr class="empty"><td colspan="8">Nothing published yet.</td></tr>';
+    document.getElementById('dg-page-info').textContent=
+      'Page '+dgPage+' · '+(st.posts||[]).length+' of '+st.total+(st.has_more?' (more)':'');
+    document.getElementById('dg-prev').disabled=dgPage<=1;
+    document.getElementById('dg-next').disabled=!st.has_more;
+    // Settings as readable key/value rows
+    const setr=await dgGet('/api/digest/settings');
+    if(setr.ok){
+      document.getElementById('dg-settings').innerHTML=kvTable(await setr.json());
+    }
+  }catch(err){
+    notice.hidden=false;
+    notice.textContent='Digest load failed: '+(err&&err.message||err);
+  }finally{
+    btn.disabled=false;
   }
 }
 /* Editor */
 async function openEditor(id){
-  const r=await fetch(base+'/api/digest/drafts/'+id);
+  const r=await dgGet('/api/digest/drafts/'+id);
   if(!r.ok){alert('Failed to load draft '+id);return;}
   dgCurrent=await r.json();
   document.getElementById('dg-editor').hidden=false;
   document.getElementById('dg-editor-title').textContent=dgCurrent.title||'(untitled)';
   document.getElementById('dg-editor-meta').textContent=
-    dgCurrent.slot_key+' · '+dgCurrent.type+' · '+dgCurrent.mode+' · '+(dgCurrent.model||'');
+    dgCurrent.slot_key+' · '+dgCurrent.type+(dgCurrent.domain?' · '+dgCurrent.domain:'')+
+    ' · '+dgCurrent.mode+' · '+(dgCurrent.model||'');
   document.getElementById('dg-body').value=dgCurrent.body||'';
   document.getElementById('dg-editor-status').textContent='';
   updateCount();updatePreview();
@@ -545,7 +625,21 @@ document.getElementById('dg-discard').addEventListener('click',async()=>{
   if(r.ok){closeEditor();loadDigest();}
 });
 document.getElementById('dg-close').addEventListener('click',closeEditor);
-document.getElementById('dg-refresh').addEventListener('click',loadDigest);
+/* Filter bar: apply resets to page 1; Enter in inputs does the same. */
+function dgApply(){dgPage=1;loadDigest();}
+document.getElementById('dg-apply').addEventListener('click',dgApply);
+['dg-f-from','dg-f-to','dg-f-minrx'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')dgApply();});
+});
+['dg-f-domain','dg-f-type','dg-f-trend'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',dgApply);
+});
+document.getElementById('dg-prev').addEventListener('click',()=>{if(dgPage>1){dgPage--;loadDigest();}});
+document.getElementById('dg-next').addEventListener('click',()=>{if(!document.getElementById('dg-next').disabled){dgPage++;loadDigest();}});
+document.getElementById('dg-refresh').addEventListener('click',()=>{
+  closeEditor();   // a stale editor open across a refresh shows old state (§23.4)
+  loadDigest();
+});
 document.getElementById('dg-run').addEventListener('click',async()=>{
   const info=document.getElementById('dg-run-info');
   info.textContent='Running gate… (gather + LLM, can take up to a minute)';

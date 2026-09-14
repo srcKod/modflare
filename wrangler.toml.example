@@ -123,10 +123,14 @@ LOG_ENABLED = "true"
 
 # ---------------------------------------------------------------------------
 # News digest (FEATURE_PLAN.md). Cron gate "0 * * * *" in [triggers] below;
-# src/digest.ts resolves the content type (daily/weekly/monthly) per gate tick.
+# src/features/digest/pipeline.ts resolves the content type per gate tick.
 # ---------------------------------------------------------------------------
 ENABLE_NEWS_DIGEST = "true"
 NEWS_DOMAIN = "tech"                # tech | tech-zh | finance | science | health | custom
+# Rotation (one preset per daily slot, recorded in the post's domain):
+#   round-robin (alias: all) — cycle tech -> tech-zh -> finance -> science -> health
+#   random — deterministic slot-keyed pick (retry-safe)
+# NEWS_DOMAIN = "round-robin"
 NEWS_MODE = "both"                  # news | papers | both
 NEWS_TARGET_CHAT_ID = "-100XXXXXXXXXX"  # channel/group id; bot must be an admin there
 NEWS_PUBLISH_HOURS = "9"            # local (TIMEZONE) hours for the daily digest

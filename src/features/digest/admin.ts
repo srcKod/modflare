@@ -11,7 +11,13 @@ import type { Env } from '../../core/types';
 import { makeLogger } from '../../core/logger';
 import { sendMessageDetailed } from '../../core/telegram';
 import { sanitizeTelegramHtml } from '../../shared/telegram-html';
-import { resolveDigestConfig } from './config';
+import {
+  resolveDigestConfig,
+  parseReactionSignals,
+  isRotationDomain,
+} from './config';
+import { loadPostAnalytics } from './analytics';
+import type { PostAnalytics } from './analytics';
 import { runDigestGate } from './pipeline';
 
 /* CSRF guard for the digest mutation endpoints                        */
@@ -210,39 +216,165 @@ async function handleDigestRun(env: Env): Promise<Response> {
   return json({ ok: true, note: 'gate ran — check the runs list for the new row' });
 }
 
-async function handleDigestStats(env: Env): Promise<Response> {
+/**
+ * Published-posts view with the Digest filter bar (plan §23.2): domain /
+ * type / date range / status / min reactions / trend — all server-side.
+ * Trend and min_reactions depend on presentation-time analytics, so the
+ * scan window (200 latest) is fetched, decorated, filtered, then paginated.
+ */
+async function handleDigestStats(request: Request, env: Env): Promise<Response> {
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
+  const url = new URL(request.url);
+  const q = url.searchParams;
   try {
-    const posts = await env.DB.prepare(
-      `SELECT dp.id, dp.title, dp.type, dp.published_at, dp.message_id, dp.target_chat_id,
-              (SELECT s.value FROM digest_post_stats s
-                WHERE s.digest_post_id = dp.id AND s.metric = 'reactions'
-                ORDER BY s.captured_at DESC LIMIT 1) AS reactions,
-              (SELECT s.detail_json FROM digest_post_stats s
-                WHERE s.digest_post_id = dp.id AND s.metric = 'reactions'
-                ORDER BY s.captured_at DESC LIMIT 1) AS reactions_json
-       FROM digest_posts dp WHERE dp.status = 'published'
-       ORDER BY dp.published_at DESC LIMIT 20`,
-    ).all();
-    const members = await env.DB.prepare(
-      `SELECT value, captured_at FROM digest_post_stats
-       WHERE metric = 'channel_members' ORDER BY captured_at DESC LIMIT 30`,
-    ).all();
-    return json({ posts: posts.results ?? [], members: members.results ?? [] });
+    const conds: string[] = [`dp.status = 'published'`];
+    const binds: (string | number)[] = [];
+    const domain = (q.get('domain') || '').trim().toLowerCase();
+    if (domain && domain !== 'all' && /^[a-z0-9-]+$/.test(domain)) {
+      conds.push('dp.domain = ?');
+      binds.push(domain);
+    }
+    const type = (q.get('type') || '').trim();
+    if (type === 'daily' || type === 'weekly' || type === 'monthly') {
+      conds.push('dp.type = ?');
+      binds.push(type);
+    }
+    const from = (q.get('from') || '').trim();
+    if (from && !Number.isNaN(Date.parse(from))) {
+      conds.push('dp.published_at >= ?');
+      binds.push(new Date(from).toISOString());
+    }
+    const to = (q.get('to') || '').trim();
+    if (to && !Number.isNaN(Date.parse(to))) {
+      // A bare date means "through the end of that day".
+      const endIso = /^\d{4}-\d{2}-\d{2}$/.test(to)
+        ? `${to}T23:59:59.999Z`
+        : new Date(to).toISOString();
+      conds.push('dp.published_at <= ?');
+      binds.push(endIso);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    const scan = await env.DB.prepare(
+      `SELECT dp.id, dp.title, dp.type, dp.domain, dp.published_at,
+              dp.message_id, dp.target_chat_id, dp.edited_at, dp.body
+       FROM digest_posts dp ${where}
+       ORDER BY dp.published_at DESC LIMIT 200`,
+    )
+      .bind(...binds)
+      .all<{
+        id: number;
+        title: string | null;
+        type: string;
+        domain: string | null;
+        published_at: string | null;
+        message_id: number | null;
+        target_chat_id: string;
+        edited_at: string | null;
+        body: string | null;
+      }>();
+    const rows = scan.results ?? [];
+
+    const cfg = resolveDigestConfig(env);
+    const signals = parseReactionSignals(env.NEWS_REACTION_SIGNALS);
+    const analytics = await loadPostAnalytics(env.DB, rows, signals);
+
+    // Presentation-time filters (need computed analytics).
+    const minRx = minReactionsValue(q);
+    const trendFilter = (q.get('trend') || '').trim();
+    const kept = rows.filter((r) => {
+      const a = analytics.get(r.id) ?? null;
+      if (minRx > 0 && (a?.total ?? 0) < minRx) return false;
+      if (trendFilter && trendFilter !== 'all' && a?.trend !== trendFilter) {
+        return false;
+      }
+      return true;
+    });
+
+    const page = Math.max(1, Number(q.get('page')) || 1);
+    const perPage = Math.min(100, Math.max(1, Number(q.get('per_page')) || 20));
+    const slice = kept.slice((page - 1) * perPage, (page - 1) * perPage + perPage);
+
+    const posts = slice.map((r) => ({
+      id: r.id,
+      title: r.title,
+      type: r.type,
+      domain: r.domain,
+      published_at: r.published_at,
+      message_id: r.message_id,
+      target_chat_id: r.target_chat_id,
+      edited_at: r.edited_at,
+      body_len: (r.body || '').length,
+      analytics: analytics.get(r.id) ?? null,
+    }));
+
+    // Summary over the whole filtered set (not just the page).
+    let sumRx = 0;
+    let sumPos = 0;
+    let sumNeg = 0;
+    let best: { title: string | null; reactions: number } | null = null;
+    for (const r of kept) {
+      const a = analytics.get(r.id);
+      if (!a) continue;
+      sumRx += a.total ?? 0;
+      sumPos += a.pos;
+      sumNeg += a.neg;
+      if (!best || (a.total ?? 0) > best.reactions) {
+        best = { title: r.title, reactions: a.total ?? 0 };
+      }
+    }
+
+    const domainRows = await env.DB.prepare(
+      `SELECT DISTINCT domain FROM digest_posts
+       WHERE domain IS NOT NULL AND status = 'published' ORDER BY domain`,
+    ).all<{ domain: string }>();
+
+    return json({
+      posts,
+      total: kept.length,
+      page,
+      per_page: perPage,
+      has_more: page * perPage < kept.length,
+      summary: {
+        published: kept.length,
+        reactions: sumRx,
+        pos: sumPos,
+        neg: sumNeg,
+        best,
+      },
+      domains: (domainRows.results ?? []).map((r) => r.domain),
+      signal_map: signals,
+    });
   } catch (err) {
     return json({ error: `digest stats failed: ${err}` }, 500);
   }
 }
 
+/** min_reactions param (empty/invalid/<=0 → 0 = no filter). */
+function minReactionsValue(q: URLSearchParams): number {
+  const n = Number((q.get('min_reactions') || '0').trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 async function handleDigestSettings(env: Env): Promise<Response> {
   const cfg = resolveDigestConfig(env);
+  const signals = parseReactionSignals(env.NEWS_REACTION_SIGNALS);
+  const rotating = isRotationDomain(cfg.domain);
   return json({
     domain: cfg.domain,
+    // Under rotation the per-domain fields depend on the slot's pick — show
+    // the strategy instead of misleading placeholder-preset values.
+    rotation: rotating
+      ? {
+          strategy: cfg.rotation?.strategy ?? 'round-robin',
+          presets: cfg.rotation?.presets ?? [],
+        }
+      : null,
     mode: cfg.mode,
-    topics: cfg.topics,
-    engines: cfg.newsEngines,
-    arxivCats: cfg.arxivCats,
-    includeDomains: cfg.includeDomains,
+    topics: rotating ? null : cfg.topics,
+    engines: rotating ? null : cfg.newsEngines,
+    arxivCats: rotating ? null : cfg.arxivCats,
+    includeDomains: rotating ? null : cfg.includeDomains,
     maxItems: cfg.maxItems,
     fetchFulltext: cfg.fetchFulltext,
     targetChatId: cfg.targetChatId,
@@ -254,6 +386,7 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     autoPublish: cfg.autoPublish,
     postAnalytics: cfg.postAnalytics,
     sponsor: cfg.sponsorText ?? null,
+    reactionSignals: signals,
     llm: { baseUrl: cfg.llm.baseUrl, model: cfg.llm.model },
   });
 }
@@ -279,6 +412,7 @@ async function handleDraftsRoute(request: Request, env: Env): Promise<Response> 
     '^/api/digest/drafts/(\d+)/(save|publish|discard)$',
   ).exec(rest);
   if (actionMatch) {
+    if (!csrfOk(request)) return json({ error: 'CSRF check failed' }, 403);
     return handleDigestAction(
       env,
       Number(actionMatch[1]),
@@ -295,7 +429,14 @@ async function handleDraftsRoute(request: Request, env: Env): Promise<Response> 
 
 export const digestAdminRoutes: AdminRoute[] = [
   { method: 'GET', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
-  { method: 'POST', rest: '/api/digest/run', handler: (_q, env) => handleDigestRun(env) },
-  { method: 'GET', rest: '/api/digest/stats', handler: (_q, env) => handleDigestStats(env) },
+  {
+    method: 'POST',
+    rest: '/api/digest/run',
+    handler: async (request, env) => {
+      if (!csrfOk(request)) return json({ error: 'CSRF check failed' }, 403);
+      return handleDigestRun(env);
+    },
+  },
+  { method: 'GET', rest: '/api/digest/stats', handler: (request, env) => handleDigestStats(request, env) },
   { method: 'GET', rest: '/api/digest/settings', handler: (_q, env) => handleDigestSettings(env) },
 ];

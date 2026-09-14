@@ -206,6 +206,13 @@ export interface Env {
   NEWS_DRAFT_TTL_DAYS?: string;
   /** 'true' = capture message_reaction[_count] updates into digest_post_stats. Default off. */
   ENABLE_POST_ANALYTICS?: string;
+  /**
+   * Optional emoji→sentiment overrides for the analytics panel:
+   * comma-separated `emoji:pos|neg|neutral` pairs merged over the built-in
+   * map (👍❤️🔥🎉👏 = pos, 👎 = neg). All reactions are captured regardless;
+   * this only classifies them at presentation (plan §23.2).
+   */
+  NEWS_REACTION_SIGNALS?: string;
   /** Optional sponsor footer line appended after sanitization (never LLM-generated). */
   NEWS_SPONSOR_TEXT?: string;
   /** Tavily Search API key (secret) — enables the `tavily` news engine. */

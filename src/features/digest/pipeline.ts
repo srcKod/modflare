@@ -27,7 +27,7 @@ import {
   normalizeUrl,
 } from '../../shared/sources';
 import type { DigestCandidate } from '../../shared/sources';
-import { resolveDigestConfig } from './config';
+import { resolveDigestConfig, isRotationDomain, ROTATION_PRESETS } from './config';
 import type { DigestContentType } from './config';
 import type { DigestConfig } from './config';
 import { digestAdminRoutes } from './admin';
@@ -330,6 +330,42 @@ function applyRtlMarks(body: string): string {
     .join('\n');
 }
 
+/* ------------------------------------------------------------------ */
+/* Domain rotation (plan §23.1)                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Resolve the effective domain for this slot when NEWS_DOMAIN holds a
+ * rotation strategy. Both strategies are *slot-deterministic* — the same
+ * slot always resolves to the same domain — so a manual retry after a
+ * transient failure regenerates the same topic instead of skipping a beat:
+ *   round-robin: cursor = count of attempted daily slots % presets
+ *   random:      stable hash of the slot key
+ * Returns the configured value unchanged for fixed presets.
+ */
+export async function resolveSlotDomain(
+  env: Env,
+  db: D1Database,
+  slotKey: string,
+): Promise<string> {
+  const configured = (env.NEWS_DOMAIN || 'tech').trim();
+  if (!isRotationDomain(configured)) return configured;
+  const presets = ROTATION_PRESETS;
+  if ((configured || '').toLowerCase() === 'random') {
+    let h = 0;
+    for (let i = 0; i < slotKey.length; i++) h = (h * 31 + slotKey.charCodeAt(i)) | 0;
+    return presets[Math.abs(h) % presets.length];
+  }
+  const res = await db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM digest_posts WHERE type = 'daily'
+       AND status IN ('draft','published')`,
+    )
+    .first<{ c: number }>();
+  const attempted = Number(res?.c ?? 0);
+  return presets[attempted % presets.length];
+}
+
 async function runDigest(
   env: Env,
   cfg: DigestConfig,
@@ -345,6 +381,15 @@ async function runDigest(
   const slotKey = computeSlotKey(type, lp);
   const now = new Date().toISOString();
 
+  // Rotation: the gate resolves a placeholder cfg; decide this slot's real
+  // domain first, then rebuild the config from the effective preset so the
+  // topics/engines/locale all match what actually runs. cfg.effectiveDomain
+  // (not cfg.domain) is what gets stored in digest_posts.domain.
+  if (cfg.rotation) {
+    const picked = await resolveSlotDomain(env, db, slotKey);
+    cfg = resolveDigestConfig(env, picked);
+  }
+
   // Idempotency: same slot + chat already attempted → no-op.
   const existing = await findSlotRow(db, slotKey, cfg.targetChatId);
   if (existing) {
@@ -359,7 +404,7 @@ async function runDigest(
 
   await logger.debug('news_run_started', {
     chat_id: Number(cfg.targetChatId),
-    extra: { slot: slotKey, type, domain: cfg.domain, mode: cfg.mode },
+    extra: { slot: slotKey, type, domain: cfg.effectiveDomain, mode: cfg.mode },
   });
 
   // Gather: fresh engines, or D1 history for weekly/monthly.
@@ -462,8 +507,14 @@ async function runDigest(
     await logger.error('news_error', {
       chat_id: Number(cfg.targetChatId),
       reason: `unparseable_digest${llm.finishReason ? ` (finish=${llm.finishReason})` : ''}`,
-      llm_response: llm.raw,
-      extra: { slot: slotKey, type, raw: llm.raw.slice(0, 2000) },
+      llm_response: llm.raw.slice(0, 1200),
+      extra: {
+        slot: slotKey,
+        type,
+        // Cap the stored raw (audit-details panels render this) — the full
+        // text stays in the worker logs / truncated marker tells you.
+        raw: llm.raw.slice(0, 1200) + (llm.raw.length > 1200 ? '…' : ''),
+      },
     });
     return;
   }
@@ -492,7 +543,7 @@ async function runDigest(
       type,
       now,
       cfg.mode,
-      cfg.domain,
+      cfg.effectiveDomain,
       cfg.targetChatId,
       parsed.title,
       body,

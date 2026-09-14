@@ -132,10 +132,13 @@ table{min-width:760px}
   max-height:140px;overflow-y:auto;
   white-space:pre-wrap;word-break:break-word
 }
-/* Reason line — subdued */
+/* Reason line — subdued; long failure reasons clamp to two lines so the
+   details panel stays readable. */
 .d-why{
   font-size:.76rem;color:#6b7280;
-  margin-bottom:4px;line-height:1.35
+  margin-bottom:4px;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden
 }
 /* LLM attribution: provider · model · flag on one line */
 .d-ai{
@@ -183,7 +186,7 @@ table{min-width:760px}
 .d-raw pre{
   margin:8px 0 0;background:#0f172a;color:#e2e8f0;
   padding:10px 12px;border-radius:6px;font-size:.72rem;
-  overflow:auto;max-height:220px;line-height:1.45
+  overflow:auto;max-height:280px;line-height:1.45
 }
 
 /* Digest tab: type badges, stats reuse .stat, editor + preview components. */
@@ -235,10 +238,35 @@ table{min-width:760px}
 .dg-btn.danger{background:#fff;border-color:#fecaca;color:#b91c1c}
 .dg-btn.danger:hover{background:#fef2f2}
 .dg-settings summary{cursor:pointer;color:#2563eb;font-size:.85rem}
-.dg-settings pre{
-  background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px;
-  font-size:.72rem;overflow:auto;max-height:260px;margin:8px 0 0
+/* Resolved settings as readable key/value rows (replaces the JSON dump). */
+.dg-kv{margin:8px 0 0}
+.dg-kv .kv{width:100%;max-width:720px;border-collapse:collapse;font-size:.8rem}
+.dg-kv .kv td{padding:4px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+.dg-kv .kv td.k{font-family:ui-monospace,monospace;color:#475569;white-space:nowrap;width:1%;font-size:.72rem}
+.dg-kv .kv td.v{color:#111827;word-break:break-word}
+.dg-kv .kv tr:last-child td{border-bottom:0}
+/* Reaction chips: per-emoji pills, tinted by sentiment class (§23.2). */
+.rx-wrap{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.rx-chip{
+  display:inline-block;padding:1px 8px;border-radius:999px;
+  background:#f3f4f6;color:#374151;font-size:.74rem;line-height:1.5;
+  white-space:nowrap;font-weight:500;border:1px solid transparent
 }
+.rx-chip.rx-pos{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.rx-chip.rx-neg{background:#fee2e2;color:#b91c1c;border-color:#fecaca}
+/* Trend arrow + velocity under the Reactions column. */
+.trend-up{color:#15803d;font-weight:600}
+.trend-down{color:#b91c1c;font-weight:600}
+.trend-flat{color:#6b7280}
+.trend-new{color:#9ca3af}
+/* Domain badges: neutral base color per preset (§23.1 rotation domains). */
+.badge[class*="dg-domain-"]{background:#f3f4f6;color:#4b5563}
+.badge.dg-domain-tech{background:#e0e7ff;color:#4338ca}
+.badge.dg-domain-tech-zh{background:#fef3c7;color:#b45309}
+.badge.dg-domain-finance{background:#dcfce7;color:#15803d}
+.badge.dg-domain-science{background:#ede9fe;color:#6d28d9}
+.badge.dg-domain-health{background:#ffe4e6;color:#be123c}
+.dg-table .secondary{font-size:.66rem;color:var(--muted)}
 
 /* Narrow screens: stack filters, shrink paddings, hide less-critical columns. */
 @media (max-width:720px){
