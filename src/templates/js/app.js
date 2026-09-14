@@ -585,7 +585,12 @@ async function loadDigest(){
 /* Editor */
 async function openEditor(id){
   const r=await dgGet('/api/digest/drafts/'+id);
-  if(!r.ok){alert('Failed to load draft '+id);return;}
+  if(!r.ok){
+    let detail='';
+    try{detail=(await r.text()).slice(0,160);}catch{}
+    alert('Failed to load draft '+id+' — HTTP '+r.status+(detail?'\n'+detail:''));
+    return;
+  }
   dgCurrent=await r.json();
   document.getElementById('dg-editor').hidden=false;
   document.getElementById('dg-editor-title').textContent=dgCurrent.title||'(untitled)';
