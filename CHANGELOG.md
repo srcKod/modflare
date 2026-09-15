@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Runtime settings layer: a D1 `settings` table (migration `0007`) where an
+  admin-panel override shadows the deploy-time env var of the same setting;
+  deleting a row reverts to the env/default without redeploying.
+- **Settings tab** in the admin panel (`?tab=settings`): flips the
+  moderation master switch, fun-reply, and self-clean toggles live, with a
+  source badge (override / env / default), a Reset-to-env button, and every
+  change audit-logged (`setting_changed` / `setting_reset`).
+- **Moderation master switch** (`ENABLE_MODERATION`, default on): when off,
+  group messages pass through unmoderated and each pass-through is logged as
+  `moderation_disabled` — the audit trail shows moderation was deliberately
+  off, not broken.
+- Cross-feature admin API: `GET /api/settings` (defs + effective values +
+  source), `POST /api/settings` (validated upsert), `POST /api/settings/reset`
+  (delete override). Writes are CSRF-checked; unlisted keys are rejected.
+
+### Deployment notes
+
+- Apply migration `0007_app_settings.sql` after deploying
+  (`npx wrangler d1 migrations apply <db> --remote`). The code degrades
+  gracefully (fail-open) if the table is missing, but the Settings tab will
+  not persist overrides until the migration is applied.
+
 ## [1.0.0] — 2026-09-13
 
 Initial release of Modflare — a serverless Telegram moderation bot on
