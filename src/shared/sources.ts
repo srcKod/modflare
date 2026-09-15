@@ -249,6 +249,71 @@ async function engineHfPapers(out: DigestCandidate[]): Promise<void> {
   }
 }
 
+async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+  if (!q.topics.length) return;
+  // Public Graph API — no key required. Docs:
+  // https://api.semanticscholar.org/api-docs/graph#tag/Paper-Data/operation/get_graph_get_paper_search
+  const fields =
+    'title,year,abstract,authors,citationCount,influentialCitationCount,url,externalIds,publicationDate,venue';
+  const query = q.topics.join(' OR ');
+  const url =
+    'https://api.semanticscholar.org/graph/v1/paper/search' +
+    `?query=${encodeURIComponent(query)}&limit=8&fields=${encodeURIComponent(fields)}`;
+  let res = await fetchWithTimeout(url, {}, 15_000);
+  if (res.status === 429) {
+    // Public tier is rate-limited; one polite retry before giving up.
+    await new Promise((r) => setTimeout(r, 4000));
+    res = await fetchWithTimeout(url, {}, 15_000);
+  }
+  if (!res.ok) return;
+  const json = (await res.json().catch(() => null)) as {
+    data?: SemanticScholarPaper[];
+  } | null;
+  for (const p of json?.data ?? []) {
+    if (!p.title) continue;
+    // Prefer the arXiv canonical URL when available; otherwise the S2 page.
+    const arxivId = p.externalIds?.ArXiv;
+    const paperUrl = arxivId
+      ? `https://arxiv.org/abs/${arxivId}`
+      : p.url || '';
+    if (!paperUrl) continue;
+    const authors = (p.authors ?? []).map((a) => a.name).filter((n): n is string => !!n);
+    const venue = p.venue?.trim();
+    const who = authors.length
+      ? 'Authors: ' +
+        authors.slice(0, 4).join(', ') +
+        (authors.length > 4 ? ' et al.' : '') +
+        ' · '
+      : '';
+    const where = venue ? `[${venue}] ` : '';
+    out.push({
+      tag: 'papers',
+      title: p.title.replace(/\s+/g, ' ').trim(),
+      url: paperUrl,
+      source: venue || domainOf(paperUrl) || 'Semantic Scholar',
+      date: p.publicationDate,
+      snippet:
+        (where + who + (p.abstract ?? '')).replace(/\s+/g, ' ').slice(0, 1200) ||
+        undefined,
+      score: p.influentialCitationCount ?? p.citationCount,
+    });
+  }
+}
+
+/** One paper hit from the Semantic Scholar Graph search endpoint. */
+interface SemanticScholarPaper {
+  title?: string;
+  year?: number;
+  abstract?: string;
+  venue?: string;
+  publicationDate?: string;
+  url?: string;
+  citationCount?: number;
+  influentialCitationCount?: number;
+  externalIds?: { ArXiv?: string; DOI?: string; [k: string]: string | undefined };
+  authors?: { authorId?: string; name?: string }[];
+}
+
 async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
   if (!q.tavilyKey) return;
   const res = await fetchWithTimeout(
@@ -378,6 +443,7 @@ export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> 
     for (const engine of q.scholarEngines) {
       if (engine === 'arxiv') jobs.push(engineArxiv(q, out));
       else if (engine === 'hf') jobs.push(engineHfPapers(out));
+      else if (engine === 's2') jobs.push(engineSemanticScholar(q, out));
     }
   }
   await Promise.allSettled(jobs);

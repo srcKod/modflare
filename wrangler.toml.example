@@ -158,7 +158,7 @@ DIGEST_MAX_TOKENS = "3000"
 # DIGEST_BASE_URL / DIGEST_API_KEY -> run the digest on its own LLM provider
 #   (falls back to OPENAI_BASE_URL / OPENAI_API_KEY). DIGEST_MODEL /
 #   DIGEST_EXTRA_BODY_JSON / DIGEST_RESPONSE_FORMAT / DIGEST_TIMEOUT_MS likewise.
-# NEWS_ENGINE = "gnews"             # gnews | hn | rss | tavily | exa (default: preset chain)
+# NEWS_ENGINE = "gnews"             # news: gnews | hn | rss | tavily | exa; scholar: arxiv | hf | s2 (default: preset chain)
 # NEWS_RSS_FEEDS = "https://www.qbitai.com/feed"
 # NEWS_TOPICS = "artificial intelligence, developer tools"
 # NEWS_ARXIV_CATEGORIES = "cs.AI,cs.CL"

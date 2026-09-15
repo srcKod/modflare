@@ -139,9 +139,9 @@ describe('parseSchedule (NEWS_SCHEDULE)', () => {
     expect(s[9].newsEngines).toContain('gnews');
     expect(s[9].newsEngines).toContain('rss');
     expect(s[9].scholarEngines).toEqual([]);
-    // papers → scholar only
+    // papers → scholar only (arxiv + hf + Semantic Scholar)
     expect(s[14].newsEngines).toEqual([]);
-    expect(s[14].scholarEngines).toEqual(['arxiv', 'hf']);
+    expect(s[14].scholarEngines).toEqual(['arxiv', 'hf', 's2']);
     // trending → hn only
     expect(s[20].newsEngines).toEqual(['hn']);
   });

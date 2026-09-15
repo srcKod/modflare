@@ -38,7 +38,7 @@ const DOMAIN_PRESETS: Record<string, DomainPreset> = {
       '机器人',
     ],
     newsEngines: ['gnews', 'hn'],
-    scholarEngines: ['arxiv', 'hf'],
+    scholarEngines: ['arxiv', 'hf', 's2'],
     arxivCats: ['cs.AI', 'cs.CL', 'cs.LG', 'cs.RO'],
     includeDomains: [],
     // Comma-separated — engineGnews runs one fetch per locale and merges.
@@ -148,7 +148,7 @@ export function parseSchedule(raw: string | undefined): Record<number, SlotConfi
 function slotForTag(tag: SlotTag): SlotConfig {
   switch (tag) {
     case 'papers':
-      return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf'] };
+      return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf', 's2'] };
     case 'trending':
       return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [] };
     case 'headlines':
