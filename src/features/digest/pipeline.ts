@@ -22,6 +22,7 @@ import {
   gatherSources,
   extractArticleText,
   extractViaJina,
+  extractViaLlamaParse,
   domainOf,
   sha256Hex,
   normalizeUrl,
@@ -33,6 +34,7 @@ import {
   ROTATION_PRESETS,
   parseSchedule,
   hasSchedule,
+  rollupHourFromSchedule,
 } from './config';
 import type { DigestContentType, SlotConfig } from './config';
 import type { DigestConfig } from './config';
@@ -80,6 +82,42 @@ export function buildDailyPrompt(cfg: DigestConfig, candidates: DigestCandidate[
         source: c.source,
         url: c.url,
         date: c.date,
+        snippet: c.snippet,
+      })),
+    ),
+  ];
+  return lines.join('\n');
+}
+
+/**
+ * Deep-dive prompt — the richer-prompt variant for `deep` slots. Input is
+ * today's already-published items, optionally carrying the full extracted
+ * article text. Analytical, longer-form, but bound to the same source contract:
+ * s{n} references only, no invented facts beyond what the snippet/title gives.
+ */
+export function buildDeepPrompt(cfg: DigestConfig, items: DigestCandidate[]): string {
+  const lines = [
+    `You are the editor writing the DEEP-DIVE edition of a professional technology digest channel on Telegram.`,
+    `You receive items ALREADY published in today's headlines digest; some include the full extracted article text (field snippet) — analyze from it, never invent beyond it.`,
+    `Write the post as Telegram HTML:`,
+    `- First line: 🔍 <b>a deep-dive headline for today's digest</b>`,
+    `- Then for each significant item: • <b>item title</b> — 3-5 sentences of professional analysis: what happened, why it matters now, and concrete implications. Append the source INLINE at the end of the same line in italic: <a href="s{n}"><i>{source}</i></a> where {n} is that item's number and {source} is its source name. Never put the source on a separate line.`,
+    `- End with one short synthesis paragraph (2-4 sentences): the common thread across today's items — no new items.`,
+    `Write ONLY in ${langHint(cfg)}; items may be in English, Chinese, or Arabic — always output in ${langHint(cfg)}.`,
+    `Use only these Telegram HTML tags: <b> <i> <u> <s> <a href="s{n}"> <code> <blockquote>. Escape & < > in visible text.`,
+    `Hard cap: 5000 characters. Never add items that are not in the list. If an item has no snippet, analyze from the title only — never fabricate details.`,
+    ``,
+    `IMPORTANT: every link href MUST be exactly href="s{n}" using the item number — NEVER write full URLs anywhere in your response. The server replaces s{n} with the real URL.`,
+    `Respond with ONLY a JSON object: {"title": "...", "post": "...", "items": [{"n": 1, "title": "..."}]}`,
+    `where "items" lists the item numbers and titles you covered, in order.`,
+    ``,
+    `TODAY'S PUBLISHED ITEMS:`,
+    JSON.stringify(
+      items.map((c, i) => ({
+        n: i + 1,
+        title: c.title,
+        source: c.source,
+        url: c.url,
         snippet: c.snippet,
       })),
     ),
@@ -377,6 +415,58 @@ export async function resolveSlotDomain(
   return presets[attempted % presets.length];
 }
 
+/** Pin a slot's engines + mode + topic override + LLM token budget onto the
+ *  resolved config. Applied before rotation (engines must survive the domain
+ *  rebuild) and re-applied after it (resolveDigestConfig resets everything). */
+function applySlotOverride(cfg: DigestConfig, slot: SlotConfig): DigestConfig {
+  return {
+    ...cfg,
+    mode: slot.mode,
+    newsEngines: slot.newsEngines,
+    scholarEngines: slot.scholarEngines,
+    ...(slot.topics !== undefined ? { topics: slot.topics } : {}),
+    ...(slot.maxTokens !== undefined
+      ? { llm: { ...cfg.llm, maxTokens: slot.maxTokens } }
+      : {}),
+  };
+}
+
+/**
+ * Deep slot source: today's already-published items, richest-first. Reads the
+ * D1 archive instead of gathering — deep content must not re-fetch intraday
+ * (cost principle: the full text was already captured at publish time and
+ * lives in digest_items.extracted_text). Items without archived text still
+ * appear (title/source only) so the LLM can decide what it can responsibly
+ * analyze; fabricated detail is forbidden by the prompt.
+ */
+async function loadDeepSource(
+  db: D1Database,
+  cfg: DigestConfig,
+  date: string,
+): Promise<DigestCandidate[]> {
+  const res = await db
+    .prepare(
+      `SELECT di.url, di.title, di.source, di.extracted_text
+       FROM digest_items di JOIN digest_posts dp ON di.digest_post_id = dp.id
+       WHERE dp.target_chat_id = ? AND dp.status = 'published'
+         AND dp.slot_key LIKE ? || 'T%' AND dp.slot_key NOT LIKE '%:deep'
+       ORDER BY (di.extracted_text IS NULL), dp.run_at DESC
+       LIMIT 10`,
+    )
+    .bind(
+      cfg.targetChatId,
+      date,
+    )
+    .all<{ url: string; title: string; source: string; extracted_text: string | null }>();
+  return (res.results ?? []).map((r) => ({
+    tag: 'headlines' as const,
+    title: r.title,
+    url: r.url,
+    source: r.source,
+    snippet: r.extracted_text ?? undefined,
+  }));
+}
+
 async function runDigest(
   env: Env,
   cfg: DigestConfig,
@@ -395,17 +485,10 @@ async function runDigest(
   const slotKey = computeSlotKey(type, lp, slot?.tag);
   const now = new Date().toISOString();
 
-  // Intraday slot: pin the engines + mode to the slot's tag. Applied before
-  // rotation so the per-tag engine set survives the domain pick below.
-  if (slot) {
-    cfg = {
-      ...cfg,
-      mode: slot.mode,
-      newsEngines: slot.newsEngines,
-      scholarEngines: slot.scholarEngines,
-      ...(slot.topics !== undefined ? { topics: slot.topics } : {}),
-    };
-  }
+  // Intraday slot: pin the engines + mode + token budget to the slot's tag.
+  // Applied before rotation so the per-tag engine set survives the domain pick
+  // below.
+  if (slot) cfg = applySlotOverride(cfg, slot);
 
   // Rotation: the gate resolves a placeholder cfg; decide this slot's real
   // domain first, then rebuild the config from the effective preset so the
@@ -415,15 +498,7 @@ async function runDigest(
   if (cfg.rotation) {
     const picked = await resolveSlotDomain(env, db, slotKey);
     cfg = resolveDigestConfig(env, picked);
-    if (slot) {
-      cfg = {
-        ...cfg,
-        mode: slot.mode,
-        newsEngines: slot.newsEngines,
-        scholarEngines: slot.scholarEngines,
-        ...(slot.topics !== undefined ? { topics: slot.topics } : {}),
-      };
-    }
+    if (slot) cfg = applySlotOverride(cfg, slot);
   }
 
   // Idempotency: same slot + chat already attempted → no-op.
@@ -479,7 +554,23 @@ async function runDigest(
         historyCandidates = [];
       }
     }
-    if (!prompt) {
+    if (slot?.tag === 'deep') {
+      // Deep-dive slot: analyze today's already-published items from the D1
+      // archive (richest extracted_text first). No engines, no fetching, no
+      // dedupe pass — everything here is already in the registry by
+      // construction, and re-inserting hits INSERT OR IGNORE (no-op).
+      candidates = await loadDeepSource(db, cfg, lp.date);
+      if (!candidates.length) {
+        await logger.info('news_skipped', {
+          chat_id: Number(cfg.targetChatId),
+          decision: 'skip',
+          reason: 'deep_no_source',
+          extra: { slot: slotKey, type },
+        });
+        return;
+      }
+      prompt = buildDeepPrompt(cfg, candidates);
+    } else if (!prompt) {
       candidates = await gatherSources(cfg);
       if (!candidates.length) {
         await logger.warn('news_skipped', {
@@ -507,18 +598,32 @@ async function runDigest(
         });
         return;
       }
-      // Optional full-text for the top few (NEWS_FETCH_FULLTEXT; plan §9 knobs)
+      // Optional full-text for the top few (NEWS_FETCH_FULLTEXT). Extraction
+      // routes by content type, cheapest-first: HTML → local HTMLRewriter →
+      // Jina Reader; PDF → Jina Reader → LlamaParse. Never pay for what we
+      // already have (≥200-char snippets skip) and never exceed the per-run
+      // cap (NEWS_EXTRACT_MAX_PER_RUN) — more slots must not scale credits.
       if (cfg.fetchFulltext) {
-        for (const c of candidates.slice(0, 4)) {
+        for (const c of candidates.slice(0, cfg.extractMax)) {
           if (c.snippet && c.snippet.length >= 200) continue;
           try {
-            const res = await fetchWithTimeout(c.url, {}, 10_000);
-            if (res.ok) {
-              const html = await res.text();
-              c.snippet = await extractArticleText(html);
-            }
-            if ((!c.snippet || c.snippet.length < 120) && cfg.jinaKey) {
+            const isPdf = /\.pdf(\?|$)/i.test(c.url);
+            if (isPdf) {
+              // Native fetch+HTMLRewriter is useless on PDFs; Jina reads them
+              // natively, LlamaParse is the deep fallback (1 credit/page).
               c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
+              if ((!c.snippet || c.snippet.length < 120) && cfg.llamaKey) {
+                c.snippet = (await extractViaLlamaParse(cfg, c.url)) || c.snippet;
+              }
+            } else {
+              const res = await fetchWithTimeout(c.url, {}, 10_000);
+              if (res.ok) {
+                const html = await res.text();
+                c.snippet = await extractArticleText(html);
+              }
+              if ((!c.snippet || c.snippet.length < 120) && cfg.jinaKey) {
+                c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
+              }
             }
           } catch {
             // extraction failure — summarize from snippet/title
@@ -702,28 +807,43 @@ export async function runDigestGate(env: Env): Promise<void> {
   const cfg = resolveDigestConfig(env);
   const lp = localParts(env.TIMEZONE);
 
+  // NEWS_SCHEDULE is the single source of digest timing. Without it there is
+  // nothing to run — log a warning (once per day, on the first hourly
+  // invocation) so a misconfigured deployment is never silent.
+  if (!hasSchedule(env)) {
+    if (lp.hour === 0) {
+      await logger.warn('news_config_warning', {
+        chat_id: Number(cfg.targetChatId) || null,
+        reason: 'NEWS_SCHEDULE unset — digest disabled',
+      });
+    }
+    return;
+  }
+  const schedule = parseSchedule(env.NEWS_SCHEDULE);
+  // Weekly/monthly rollups fire at the earliest scheduled hour (morning
+  // roundup) — replaces the removed NEWS_PUBLISH_HOURS.
+  const rollupHour = rollupHourFromSchedule(schedule);
+
   let type: DigestContentType | null = null;
   let slot: SlotConfig | undefined;
 
   if (
     cfg.monthlyEnabled &&
     lp.day === cfg.monthlyDay &&
-    lp.hour === cfg.publishHours[0]
+    lp.hour === rollupHour
   ) {
     type = 'monthly';
   } else if (
     cfg.weeklyEnabled &&
     lp.weekday === cfg.weeklyDay &&
-    lp.hour === cfg.publishHours[0]
+    lp.hour === rollupHour
   ) {
     type = 'weekly';
   } else {
-    const scheduled = parseSchedule(env.NEWS_SCHEDULE)[lp.hour];
+    const scheduled = schedule[lp.hour];
     if (scheduled) {
       type = 'daily';
       slot = scheduled;
-    } else if (!hasSchedule(env) && cfg.publishHours.includes(lp.hour)) {
-      type = 'daily';
     }
   }
   if (!type) return;

@@ -19,6 +19,7 @@ import {
   parseSchedule,
   isSeedEnabled,
   parseDraftsPath,
+  rollupHourFromSchedule,
 } from './config';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
@@ -468,7 +469,7 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     maxItems: cfg.maxItems,
     fetchFulltext: cfg.fetchFulltext,
     targetChatId: cfg.targetChatId,
-    publishHours: cfg.publishHours,
+    rollupHour: rollupHourFromSchedule(parseSchedule(env.NEWS_SCHEDULE)),
     weeklyEnabled: cfg.weeklyEnabled,
     monthlyEnabled: cfg.monthlyEnabled,
     language: cfg.language,
@@ -479,7 +480,8 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     reactionSignals: signals,
     llm: { baseUrl: cfg.llm.baseUrl, model: cfg.llm.model },
     // Intraday schedule as configured (server authoritative). Empty object
-    // when NEWS_SCHEDULE is unset — the panel falls back to publishHours.
+    // when NEWS_SCHEDULE is unset — rollupHour is null in that case too (the
+    // digest does not run at all without a schedule).
     schedule: parseSchedule(env.NEWS_SCHEDULE),
     // Lets the panel hide the "Insert test draft" button unless the dev seed
     // toggle is on — the endpoint is 04'd server-side otherwise, so there's no

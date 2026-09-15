@@ -43,6 +43,7 @@ export interface SourceQuery {
   tavilyKey?: string;
   exaKey?: string;
   jinaKey?: string;
+  llamaKey?: string;
 }
 
 
@@ -164,6 +165,7 @@ async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
       points?: number;
       objectID?: string;
       created_at?: string;
+      story_text?: string;
     }[];
   } | null;
   for (const h of json?.hits ?? []) {
@@ -175,6 +177,9 @@ async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
       source: domainOf(h.url) || 'Hacker News',
       date: h.created_at,
       score: h.points,
+      // story_text is Ask/Show HN self-text — already in the response, so this
+      // costs zero extra requests and often clears the ≥200-char fulltext gate.
+      snippet: h.story_text?.replace(/\s+/g, ' ').trim().slice(0, 1200) || undefined,
     });
   }
 }
@@ -438,6 +443,7 @@ export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> 
     else if (engine === 'rss') jobs.push(engineRss(q, out));
     else if (engine === 'tavily') jobs.push(engineTavily(q, out));
     else if (engine === 'exa') jobs.push(engineExa(q, out));
+    else if (engine === 'jsearch') jobs.push(engineJsearch(q, out));
   }
   if (q.mode !== 'news') {
     for (const engine of q.scholarEngines) {
@@ -512,16 +518,113 @@ export async function extractArticleText(html: string, cap = 1200): Promise<stri
   return pick.replace(/\s+/g, ' ').trim().slice(0, cap);
 }
 
+/**
+ * Jina Reader fallback extraction. JSON mode (`Accept: application/json`) when
+ * keyed: structured `data.content` beats scraping raw markdown, and
+ * `data.usage.tokens` enables budget accounting. Keyed calls get 500 RPM and
+ * escape the anonymous abuse block; keyless calls still work at 20 RPM.
+ */
 export async function extractViaJina(
   q: SourceQuery,
   url: string,
   cap = 1200,
 ): Promise<string> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { Accept: 'application/json' };
   if (q.jinaKey) headers.Authorization = `Bearer ${q.jinaKey}`;
   const res = await fetchWithTimeout(`https://r.jina.ai/${url}`, { headers }, 20_000);
   if (!res.ok) return '';
-  const md = await res.text();
-  return md.replace(/\s+/g, ' ').trim().slice(0, cap);
+  const json = (await res.json().catch(() => null)) as {
+    data?: { content?: string };
+  } | null;
+  const content = json?.data?.content;
+  if (typeof content !== 'string') return '';
+  return content.replace(/\s+/g, ' ').trim().slice(0, cap);
+}
+
+/**
+ * LlamaParse document extraction — the PDF/files specialist. Never used for
+ * HTML (Jina does HTML better and effectively free; LlamaParse bills every
+ * page). Fast tier = 1 credit/page against the 10K free monthly pool; results
+ * are cached server-side for 48h, so re-parses within that window are free.
+ */
+export async function extractViaLlamaParse(
+  q: SourceQuery,
+  url: string,
+  cap = 1200,
+): Promise<string> {
+  if (!q.llamaKey) return '';
+  try {
+    const create = await fetchWithTimeout(
+      'https://api.cloud.llamaindex.ai/api/parsing/upload/file',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${q.llamaKey}`,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ file_url: url, parsing_mode: 'fast' }),
+      },
+      30_000,
+    );
+    if (!create.ok) return '';
+    const job = (await create.json().catch(() => null)) as { id?: string } | null;
+    if (!job?.id) return '';
+    // Poll for completion (typical PDF: a few seconds; 48h cache makes retries free).
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 3_000));
+      const poll = await fetchWithTimeout(
+        `https://api.cloud.llamaindex.ai/api/parsing/job/${job.id}/result/text`,
+        { headers: { Authorization: `Bearer ${q.llamaKey}` } },
+        15_000,
+      );
+      if (poll.status === 404) continue; // still processing
+      if (!poll.ok) return '';
+      const text = await poll.text();
+      return text.replace(/\s+/g, ' ').trim().slice(0, cap);
+    }
+  } catch {
+    // extraction failure — caller keeps whatever it already has
+  }
+  return '';
+}
+
+/**
+ * Jina Search engine (`s.jina.ai`). Requires a key (keyless requests are
+ * blocked). Each request costs a FIXED ~10,000 tokens against the shared free
+ * pool (~1,000 requests total) — it is an engine (one call per run), never a
+ * per-candidate path. Results arrive with extracted page content, so its
+ * candidates are usually born past the ≥200-char fulltext gate.
+ */
+async function engineJsearch(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+  if (!q.jinaKey) return;
+  const query = q.topics.join(' ');
+  if (!query) return;
+  const res = await fetchWithTimeout(
+    `https://s.jina.ai/${encodeURIComponent(query)}`,
+    { headers: { Authorization: `Bearer ${q.jinaKey}`, Accept: 'application/json' } },
+    30_000,
+  );
+  if (!res.ok) return;
+  const json = (await res.json().catch(() => null)) as {
+    data?: {
+      title?: string;
+      url?: string;
+      description?: string;
+      content?: string;
+    }[];
+  } | null;
+  for (const r of json?.data ?? []) {
+    if (!r.title || !r.url) continue;
+    out.push({
+      tag: 'headlines',
+      title: r.title.replace(/\s+/g, ' ').trim(),
+      url: r.url,
+      source: domainOf(r.url) || 'Jina',
+      snippet: (r.content || r.description || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 1200),
+    });
+  }
 }
 

@@ -178,8 +178,6 @@ export interface Env {
   NEWS_FETCH_FULLTEXT?: string;
   /** Target channel/group (@username or -100… id). Bot must be an admin there. */
   NEWS_TARGET_CHAT_ID?: string;
-  /** Local (TIMEZONE) hours to publish the daily digest, e.g. "9,18". Default 9. */
-  NEWS_PUBLISH_HOURS?: string;
   /** 'true' enables the weekly Roundup (built from the week's published items). */
   NEWS_ENABLE_WEEKLY?: string;
   /** Day of week for the Roundup, 0=Sunday. Default 0. */
@@ -218,9 +216,11 @@ export interface Env {
   /**
    * Intraday schedule: CSV of `hour:tag` slots that drive the hourly gate,
    * e.g. "9:headlines,14:papers,20:trending". Hours are local (TIMEZONE). Each
-   * slot pins its own engines + LLM mode and tags its slot key so same-day
-   * slots don't collide. Unset = legacy single-daily-publish via
-   * NEWS_PUBLISH_HOURS (plan §23.6).
+   * slot pins its own engines + LLM mode + token budget and tags its slot key so
+   * same-day slots don't collide. This is the SINGLE source for digest timing:
+   * when unset (with ENABLE_NEWS_DIGEST=true) the digest does not run and the
+   * gate logs a daily warning. Weekly/monthly rollups fire at the earliest
+   * scheduled hour.
    */
   NEWS_SCHEDULE?: string;
   /**
@@ -233,8 +233,17 @@ export interface Env {
   TAVILY_API_KEY?: string;
   /** Exa API key (secret) — enables the `exa` news engine. */
   EXA_API_KEY?: string;
-  /** Jina Reader key (secret) — raises the fallback extractor above keyless limits. */
+  /**
+   * Jina key (secret) — two roles: Reader extraction fallback (`r.jina.ai`,
+   * 500 RPM keyed vs 20 anonymous, JSON mode via Accept: application/json) and
+   * the `jsearch` engine (`s.jina.ai`, 100 RPM). Costs ~10,000 fixed tokens per
+   * search request against the shared free token pool.
+   */
   JINA_API_KEY?: string;
+  /** LlamaParse key (secret) — documents/PDF extraction specialist (10K credits free). */
+  LLAMAINDEX_APIKEY?: string;
+  /** Max candidates enriched with full-text per run. Default 4 (cost guard). */
+  NEWS_EXTRACT_MAX_PER_RUN?: string;
 
   /** Digest LLM endpoint override. Unset = OPENAI_BASE_URL. */
   DIGEST_BASE_URL?: string;
@@ -242,8 +251,6 @@ export interface Env {
   DIGEST_API_KEY?: string;
   /** Digest model id. Unset = TEXT_MODEL, then MODEL_NAME. */
   DIGEST_MODEL?: string;
-  /** Digest output token cap. Default 2048 (independent of LLM_MAX_TOKENS). */
-  DIGEST_MAX_TOKENS?: string;
   /** Digest LLM timeout ms. Default 120000. */
   DIGEST_TIMEOUT_MS?: string;
   /** Provider params merged into the digest request body (e.g. thinking-off). Unset = LLM_EXTRA_BODY_JSON. */

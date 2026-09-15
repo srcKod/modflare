@@ -20,7 +20,7 @@ interface DomainPreset {
   rssFeeds: string[];
 }
 
-const DOMAIN_PRESETS: Record<string, DomainPreset> = {
+export const DOMAIN_PRESETS: Record<string, DomainPreset> = {
   // `tech` spans western + Chinese sources: gnews is queried in BOTH the en-US
   // and zh-CN locales (see engineGnews), the Chinese outlets below come in
   // through `rss`, and cs.RO is added to cover the robotics surge. cs.CL keeps
@@ -53,7 +53,9 @@ const DOMAIN_PRESETS: Record<string, DomainPreset> = {
     topics: ['central banks', 'stock markets', 'fintech', 'crypto regulation'],
     newsEngines: ['gnews'],
     scholarEngines: [],
-    arxivCats: [],
+    // Quantitative-finance categories so a papers slot under a rotation-picked
+    // finance day keeps its arXiv source (empty cats = engine no-ops).
+    arxivCats: ['q-fin.CP', 'q-fin.ST', 'q-fin.TR', 'q-fin.RM'],
     includeDomains: [],
     gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
     rssFeeds: ['https://feeds.a.dj.com/rss/RSSMarketsMain.xml'],
@@ -71,7 +73,8 @@ const DOMAIN_PRESETS: Record<string, DomainPreset> = {
     topics: ['public health', 'epidemiology', 'medical research'],
     newsEngines: ['gnews'],
     scholarEngines: [],
-    arxivCats: [],
+    // Epidemiology / quantitative-methods categories — see finance note above.
+    arxivCats: ['q-bio.PE', 'q-bio.QM'],
     includeDomains: [],
     gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
     rssFeeds: [],
@@ -108,10 +111,12 @@ export function isRotationDomain(value: string): boolean {
 /* Intraday schedule (plan §23.6)                                      */
 /* ------------------------------------------------------------------ */
 
-/** Content type of an intraday slot — a CandidateTag the slot gathers for. */
-export type SlotTag = 'headlines' | 'trending' | 'papers';
+/** Content type of an intraday slot — a CandidateTag the slot gathers for.
+ *  `deep` is the exception: it gathers nothing (D1-sourced deep-dive over
+ *  today's already-published items). */
+export type SlotTag = 'headlines' | 'trending' | 'papers' | 'deep';
 
-/** A single intraday slot: the engines + LLM mode it runs. */
+/** A single intraday slot: the engines + LLM mode + token budget it runs. */
 export interface SlotConfig {
   tag: SlotTag;
   mode: DigestMode;
@@ -127,13 +132,19 @@ export interface SlotConfig {
    * the query return nothing and the slot silently skips.
    */
   topics?: string[];
+  /**
+   * Per-slot LLM output budget (replaces the removed global DIGEST_MAX_TOKENS
+   * env). Overrides cfg.llm.maxTokens for this run only.
+   */
+  maxTokens: number;
 }
 
 /**
  * Parse NEWS_SCHEDULE (CSV of `hour:tag`) into hour → SlotConfig.
- *   e.g. "9:headlines,14:papers,20:trending"
+ *   e.g. "9:headlines,14:papers,20:trending,22:deep"
  * Hours are local (TIMEZONE). Unknown tags are skipped. `segment` is reserved
- * and not schedulable yet.
+ * and not schedulable yet. Deep slots belong AFTER the headlines hour — they
+ * analyze today's already-published items.
  */
 export function parseSchedule(raw: string | undefined): Record<number, SlotConfig> {
   const out: Record<number, SlotConfig> = {};
@@ -145,30 +156,45 @@ export function parseSchedule(raw: string | undefined): Record<number, SlotConfi
     const hour = Number(m[1]);
     if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
     const tag = m[2] as SlotTag;
-    if (tag !== 'headlines' && tag !== 'trending' && tag !== 'papers') continue;
+    if (tag !== 'headlines' && tag !== 'trending' && tag !== 'papers' && tag !== 'deep') continue;
     out[hour] = slotForTag(tag);
   }
   return out;
 }
 
-/** The engine set + mode for a given slot tag. Paid engines (tavily/exa)
- *  gate on their key inside the engine fns, so listing them is safe even when
- *  unset — they simply no-op. */
+/** The earliest scheduled hour — when weekly/monthly rollups fire. Derived from
+ *  the schedule ("morning roundup") instead of the removed NEWS_PUBLISH_HOURS. */
+export function rollupHourFromSchedule(
+  schedule: Record<number, SlotConfig>,
+): number | null {
+  const hours = Object.keys(schedule).map(Number);
+  return hours.length ? Math.min(...hours) : null;
+}
+
+/** The engine set + mode + token budget for a given slot tag. Paid/credit
+ *  engines (tavily/exa/jsearch) gate on their key inside the engine fns, so
+ *  listing them is safe even when unset — they simply no-op. */
 function slotForTag(tag: SlotTag): SlotConfig {
   switch (tag) {
     case 'papers':
-      return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf', 's2'] };
+      return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf', 's2'], maxTokens: 3000 };
     case 'trending':
       // Topic-agnostic: trending surfaces what's hot, not what matches keywords.
       // See SlotConfig.topics — an empty Algolia `query=` matches all stories.
-      return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [], topics: [] };
+      return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [], topics: [], maxTokens: 3000 };
+    case 'deep':
+      // Gathers NOTHING — the pipeline loads today's published items (with
+      // archived extracted_text) from D1 and asks for an analytical deep-dive.
+      // Costs zero subrequests; the budget goes to richer LLM output.
+      return { tag, mode: 'news', newsEngines: [], scholarEngines: [], maxTokens: 5000 };
     case 'headlines':
     default:
       return {
         tag,
         mode: 'news',
-        newsEngines: ['gnews', 'hn', 'rss', 'tavily', 'exa'],
+        newsEngines: ['gnews', 'hn', 'rss', 'tavily', 'exa', 'jsearch'],
         scholarEngines: [],
+        maxTokens: 3000,
       };
   }
 }
@@ -240,8 +266,9 @@ export interface DigestConfig {
   minPoints: number;
   maxItems: number;
   fetchFulltext: boolean;
+  /** Cost guard: max candidates enriched with full-text per run. */
+  extractMax: number;
   targetChatId: string;
-  publishHours: number[];
   weeklyEnabled: boolean;
   weeklyDay: number; // 0=Sunday
   monthlyEnabled: boolean;
@@ -264,9 +291,15 @@ export interface DigestConfig {
   tavilyKey?: string;
   exaKey?: string;
   jinaKey?: string;
+  llamaKey?: string;
   gnewsLocale: string;
   rssFeeds: string[];
 }
+
+/** Digest LLM output budget when no per-slot override applies (rollups,
+ *  env-less default — the old global DIGEST_MAX_TOKENS env was removed as too
+ *  generic; slots carry explicit budgets via SlotConfig.maxTokens). */
+export const DIGEST_DEFAULT_MAX_TOKENS = 3000;
 
 
 export function resolveDigestConfig(
@@ -299,10 +332,6 @@ export function resolveDigestConfig(
     : [...preset.newsEngines];
   if (mode === 'papers') engines = [...preset.scholarEngines, ...engines];
 
-  const hours = envList(env.NEWS_PUBLISH_HOURS)
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 23);
-
   return {
     domain: configured,
     rotation,
@@ -320,8 +349,8 @@ export function resolveDigestConfig(
     minPoints: Number(env.NEWS_MIN_POINTS) || 25,
     maxItems: Math.min(8, Math.max(1, Number(env.NEWS_MAX_ITEMS) || 5)),
     fetchFulltext: (env.NEWS_FETCH_FULLTEXT || '').trim() === 'true',
+    extractMax: Math.max(1, Math.min(12, Number(env.NEWS_EXTRACT_MAX_PER_RUN) || 4)),
     targetChatId: (env.NEWS_TARGET_CHAT_ID || '').trim(),
-    publishHours: hours.length ? hours : [9],
     weeklyEnabled: (env.NEWS_ENABLE_WEEKLY || '') === 'true',
     weeklyDay: Number(env.NEWS_WEEKLY_DAY ?? 0) || 0,
     monthlyEnabled: (env.NEWS_ENABLE_MONTHLY || '') === 'true',
@@ -339,7 +368,7 @@ export function resolveDigestConfig(
       ),
       apiKey: env.DIGEST_API_KEY || env.OPENAI_API_KEY || '',
       model: env.DIGEST_MODEL || env.TEXT_MODEL || env.MODEL_NAME,
-      maxTokens: Number(env.DIGEST_MAX_TOKENS) || 2048,
+      maxTokens: DIGEST_DEFAULT_MAX_TOKENS,
       timeoutMs: Number(env.DIGEST_TIMEOUT_MS) || 120_000,
       extraBody: env.DIGEST_EXTRA_BODY_JSON || env.LLM_EXTRA_BODY_JSON,
       jsonMode: (env.DIGEST_RESPONSE_FORMAT ?? 'json') === 'json',
@@ -347,6 +376,7 @@ export function resolveDigestConfig(
     tavilyKey: env.TAVILY_API_KEY,
     exaKey: env.EXA_API_KEY,
     jinaKey: env.JINA_API_KEY,
+    llamaKey: env.LLAMAINDEX_APIKEY,
     gnewsLocale: preset.gnewsLocale,
     rssFeeds: envList(env.NEWS_RSS_FEEDS).length
       ? envList(env.NEWS_RSS_FEEDS)

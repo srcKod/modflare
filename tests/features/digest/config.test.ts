@@ -3,6 +3,8 @@ import {
   isRotationDomain,
   parseReactionSignals,
   parseSchedule,
+  rollupHourFromSchedule,
+  DOMAIN_PRESETS,
   ROTATION_PRESETS,
 } from '../../../src/features/digest/config';
 import { resolveSlotDomain } from '../../../src/features/digest/pipeline';
@@ -157,6 +159,36 @@ describe('parseSchedule (NEWS_SCHEDULE)', () => {
     // headlines, by contrast, is keyword-targeted — it must NOT pin topics so it
     // inherits the resolved preset's topic list.
     expect(s[9].topics).toBeUndefined();
+  });
+
+  it('parses the deep tag with a higher per-slot token budget and empty engines', () => {
+    const s = parseSchedule('9:headlines,21:deep');
+    expect(s[21].tag).toBe('deep');
+    // Deep is D1-sourced — it gathers nothing and spends its budget on a
+    // richer prompt instead.
+    expect(s[21].newsEngines).toEqual([]);
+    expect(s[21].scholarEngines).toEqual([]);
+    expect(s[21].maxTokens).toBe(5000);
+    // Daily slots carry the standard budget.
+    expect(s[9].maxTokens).toBe(3000);
+    // Headlines slot includes the key-gated jsearch engine.
+    expect(s[9].newsEngines).toContain('jsearch');
+  });
+
+  it('rolls up (weekly/monthly) at the earliest scheduled hour', () => {
+    // "morning roundup" — derived, replacing the removed NEWS_PUBLISH_HOURS.
+    const s = parseSchedule('9:headlines,5:papers,20:trending');
+    expect(rollupHourFromSchedule(s)).toBe(5);
+    expect(rollupHourFromSchedule({})).toBeNull();
+  });
+
+  it('gives every rotation-eligible preset arXiv categories so papers slots survive rotation', () => {
+    // Regression guard: empty arxivCats make the arXiv engine no-op, so a
+    // papers slot under a rotation-picked finance/health day would lose its
+    // arXiv source entirely.
+    for (const preset of ROTATION_PRESETS) {
+      expect(DOMAIN_PRESETS[preset].arxivCats.length).toBeGreaterThan(0);
+    }
   });
 
   it('skips malformed entries, out-of-range hours and unknown tags', () => {

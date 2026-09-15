@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDailyPrompt } from '../../../src/features/digest/pipeline';
+import { buildDailyPrompt, buildDeepPrompt } from '../../../src/features/digest/pipeline';
 import type { DigestConfig } from '../../../src/features/digest/config';
 import type { DigestCandidate } from '../../../src/shared/sources';
 
@@ -16,8 +16,8 @@ const cfg = (over: Partial<DigestConfig> = {}): DigestConfig => ({
   minPoints: 0,
   maxItems: 5,
   fetchFulltext: false,
+  extractMax: 4,
   targetChatId: '-1001341446217',
-  publishHours: [9],
   weeklyEnabled: false,
   weeklyDay: 0,
   monthlyEnabled: false,
@@ -68,5 +68,29 @@ describe('buildDailyPrompt — source link contract', () => {
     expect(prompt).toContain('A Great Paper');
     expect(prompt).toContain('"n":2');
     expect(prompt).toContain('A News Story');
+  });
+});
+
+describe('buildDeepPrompt — deep-dive contract', () => {
+  it('asks for the richer analytical format while keeping the s{n} source contract', () => {
+    const prompt = buildDeepPrompt(cfg({ mode: 'news' }), candidates);
+
+    // Richer instruction (3-5 sentences + synthesis) — the deep variant.
+    expect(prompt).toContain('DEEP-DIVE');
+    expect(prompt).toContain('3-5 sentences');
+    expect(prompt).toContain('synthesis');
+
+    // Same source contract as the daily prompt.
+    expect(prompt).toContain('<a href="s{n}"><i>{source}</i></a>');
+    expect(prompt).toContain('NEVER write full URLs anywhere in your response');
+    // Deep carries its own (higher) cap and the anti-fabrication guard.
+    expect(prompt).toContain('5000 characters');
+    expect(prompt).toContain('never fabricate details');
+  });
+
+  it('serializes today\'s published items with their extracted text', () => {
+    const prompt = buildDeepPrompt(cfg({ mode: 'news' }), candidates);
+    expect(prompt).toContain('"n":1');
+    expect(prompt).toContain('An abstract.');
   });
 });

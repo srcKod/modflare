@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { gatherSources } from '../../src/shared/sources';
+import {
+  extractViaJina,
+  extractViaLlamaParse,
+  gatherSources,
+} from '../../src/shared/sources';
 import type { SourceQuery } from '../../src/shared/sources';
 
 /** Minimal SourceQuery: s2 is a scholar engine so only topics + mode matter. */
@@ -137,6 +141,124 @@ describe('engineSemanticScholar (s2)', () => {
   it('skips the engine (no fetch) when there are no topics', async () => {
     const calls = mockFetchOnce({ status: 200, body: S2_BODY });
     const cands = await gatherSources(baseQuery({ topics: [] }));
+    expect(calls.length).toBe(0);
+    expect(cands).toEqual([]);
+  });
+});
+
+describe('engineHn — story_text snippet', () => {
+  it('maps Algolia story_text into the snippet at zero extra cost', async () => {
+    mockFetchOnce({
+      status: 200,
+      body: {
+        hits: [
+          {
+            title: 'Show HN: I built a thing',
+            url: 'https://example.dev/thing',
+            points: 120,
+            objectID: '1',
+            created_at: '2026-09-15T00:00:00Z',
+            story_text: 'Hi HN! This is my   launch post with details.',
+          },
+          {
+            title: 'A link post',
+            url: 'https://example.com/link',
+            points: 80,
+            objectID: '2',
+            created_at: '2026-09-15T01:00:00Z',
+            // no story_text -> snippet stays undefined (fulltext chain's job)
+          },
+        ],
+      },
+    });
+    const cands = await gatherSources(
+      baseQuery({ mode: 'news', newsEngines: ['hn'], scholarEngines: [] }),
+    );
+    expect(cands.length).toBe(2);
+    expect(cands[0].snippet).toBe('Hi HN! This is my launch post with details.');
+    expect(cands[1].snippet).toBeUndefined();
+  });
+});
+
+describe('extractViaJina — JSON mode', () => {
+  it('parses the structured data.content payload', async () => {
+    const calls: string[] = [];
+    const headers: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        calls.push(String(url));
+        const h = new Headers(init?.headers);
+        h.forEach((v, k) => headers.push(`${k}:${v}`));
+        return new Response(
+          JSON.stringify({ code: 200, data: { content: 'Some  extracted\narticle text.' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }),
+    );
+    const text = await extractViaJina(
+      baseQuery({ jinaKey: 'jina_test' }),
+      'https://example.com/article',
+    );
+    expect(calls[0]).toBe('https://r.jina.ai/https://example.com/article');
+    expect(headers.join('|')).toContain('accept:application/json');
+    expect(headers.join('|')).toContain('authorization:Bearer jina_test');
+    expect(text).toBe('Some extracted article text.');
+  });
+
+  it('returns "" on a non-ok response', async () => {
+    mockFetchOnce({ status: 403, body: { code: 40305, message: 'blocked' } });
+    const text = await extractViaJina(baseQuery(), 'https://example.com/x');
+    expect(text).toBe('');
+  });
+});
+
+describe('extractViaLlamaParse — PDF documents', () => {
+  it('no-ops without a key (no requests, no credit burn)', async () => {
+    const calls = mockFetchOnce({ status: 200, body: {} });
+    const text = await extractViaLlamaParse(baseQuery(), 'https://arxiv.org/pdf/2401.00001');
+    expect(calls.length).toBe(0);
+    expect(text).toBe('');
+  });
+});
+
+describe('engineJsearch — Jina Search as engine', () => {
+  const JSEARCH_BODY = {
+    code: 200,
+    data: [
+      {
+        title: 'A Search Result',
+        url: 'https://news.example.com/story',
+        content: 'The page   content extracted by the search API.',
+        description: 'short desc',
+      },
+      { title: '', url: 'https://no-title.example/' }, // skipped: no title
+    ],
+  };
+
+  it('maps results to headline candidates with extracted content snippets', async () => {
+    const calls = mockFetchOnce({ status: 200, body: JSEARCH_BODY });
+    const cands = await gatherSources(
+      baseQuery({
+        mode: 'news',
+        newsEngines: ['jsearch'],
+        scholarEngines: [],
+        jinaKey: 'jina_test',
+      }),
+    );
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toContain('https://s.jina.ai/');
+    expect(cands.length).toBe(1);
+    expect(cands[0].title).toBe('A Search Result');
+    expect(cands[0].source).toBe('news.example.com');
+    expect(cands[0].snippet).toBe('The page content extracted by the search API.');
+  });
+
+  it('no-ops without a key — jsearch is key-gated like tavily/exa', async () => {
+    const calls = mockFetchOnce({ status: 200, body: JSEARCH_BODY });
+    const cands = await gatherSources(
+      baseQuery({ mode: 'news', newsEngines: ['jsearch'], scholarEngines: [] }),
+    );
     expect(calls.length).toBe(0);
     expect(cands).toEqual([]);
   });
