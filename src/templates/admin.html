@@ -78,7 +78,18 @@
     <div class="stats" id="dg-stats"></div>
     <div class="filters">
       <button id="dg-refresh">Refresh</button>
-      <button id="dg-seed" title="Insert a fake draft (dev only, NEWS_DEV_SEED=true) to review the draft workflow">Insert test draft</button>
+      <span id="dg-seed-wrap" hidden>
+        <label for="dg-seed-hour">Run slot @</label>
+        <input id="dg-seed-hour" type="number" min="0" max="23" value="9" style="width:52px"/>
+        <label for="dg-seed-tag">tag:</label>
+        <select id="dg-seed-tag">
+          <option value="headlines">headlines</option>
+          <option value="papers">papers</option>
+          <option value="trending">trending</option>
+          <option value="deep">deep</option>
+        </select>
+        <button id="dg-seed" title="Run the REAL pipeline for the chosen local hour + tag (dev only, NEWS_DEV_SEED=true) and save a draft to review">Run real draft</button>
+      </span>
     </div>
 
     <div class="filters" id="dg-filters">

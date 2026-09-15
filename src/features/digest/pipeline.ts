@@ -35,8 +35,9 @@ import {
   parseSchedule,
   hasSchedule,
   rollupHourFromSchedule,
+  slotForTag,
 } from './config';
-import type { DigestContentType, SlotConfig } from './config';
+import type { DigestContentType, SlotConfig, SlotTag } from './config';
 import type { DigestConfig } from './config';
 import { digestAdminRoutes } from './admin';
 
@@ -247,7 +248,10 @@ function parseDigestResult(
 /* Slot computation (TIMEZONE-aware)                                   */
 /* ------------------------------------------------------------------ */
 
-function localParts(tz: string, now = new Date()): {
+/** Local-calendar parts (date/hour/weekday/day) for the worker's TIMEZONE.
+ *  Exported so the dev-seed endpoint can default to "the hour a cron tick
+ *  right now would run". */
+export function localParts(tz: string, now = new Date()): {
   date: string;
   hour: number;
   weekday: number; // 0=Sunday..6=Saturday
@@ -789,17 +793,50 @@ async function runDigest(
 /* ------------------------------------------------------------------ */
 
 /**
+ * Resolve a local-parts timestamp into a content type + slot — the single
+ * source of truth for "what runs at this moment". Shared by the cron gate
+ * and the dev-seed endpoint (which runs it from a CHOOSEABLE hour so the
+ * test draft reflects exactly what the cron would publish).
+ *
+ * Priority when several types match (avoids triple-posting):
+ *   monthly > weekly > intraday schedule.
+ */
+function resolveDigestType(
+  env: Env,
+  cfg: DigestConfig,
+  lp: { date: string; hour: number; weekday: number; day: number },
+): { type: DigestContentType; slot?: SlotConfig } {
+  const schedule = parseSchedule(env.NEWS_SCHEDULE);
+  // Weekly/monthly rollups fire at the earliest scheduled hour (morning
+  // roundup) — replaces the removed NEWS_PUBLISH_HOURS.
+  const rollupHour = rollupHourFromSchedule(schedule);
+
+  if (
+    cfg.monthlyEnabled &&
+    lp.day === cfg.monthlyDay &&
+    lp.hour === rollupHour
+  ) {
+    return { type: 'monthly' };
+  }
+  if (
+    cfg.weeklyEnabled &&
+    lp.weekday === cfg.weeklyDay &&
+    lp.hour === rollupHour
+  ) {
+    return { type: 'weekly' };
+  }
+  const scheduled = schedule[lp.hour];
+  if (scheduled) return { type: 'daily', slot: scheduled };
+  return { type: 'daily' };
+}
+
+/**
  * Hourly gate: resolves the current local time (TIMEZONE) into a content
  * type and runs the pipeline for the matching slot.
  *
- * Priority when several types match (avoids triple-posting):
- *   monthly > weekly > intraday-schedule > legacy daily.
- *
- * Intraday schedule (NEWS_SCHEDULE) is the preferred driver: each slot pins
- * its own engines + mode via a SlotConfig and tags its slot key, so a single
- * day can run e.g. headlines @09, papers @14, trending @20 without colliding.
- * When NEWS_SCHEDULE is unset, the legacy NEWS_PUBLISH_HOURS daily behavior
- * is preserved for backward compatibility.
+ * Intraday schedule (NEWS_SCHEDULE) is the single source of digest timing.
+ * Without it there is nothing to run — log a warning (once per day, on the
+ * first hourly invocation) so a misconfigured deployment is never silent.
  */
 export async function runDigestGate(env: Env): Promise<void> {
   if ((env.ENABLE_NEWS_DIGEST || '').trim().toLowerCase() !== 'true') return;
@@ -807,9 +844,6 @@ export async function runDigestGate(env: Env): Promise<void> {
   const cfg = resolveDigestConfig(env);
   const lp = localParts(env.TIMEZONE);
 
-  // NEWS_SCHEDULE is the single source of digest timing. Without it there is
-  // nothing to run — log a warning (once per day, on the first hourly
-  // invocation) so a misconfigured deployment is never silent.
   if (!hasSchedule(env)) {
     if (lp.hour === 0) {
       await logger.warn('news_config_warning', {
@@ -819,34 +853,8 @@ export async function runDigestGate(env: Env): Promise<void> {
     }
     return;
   }
-  const schedule = parseSchedule(env.NEWS_SCHEDULE);
-  // Weekly/monthly rollups fire at the earliest scheduled hour (morning
-  // roundup) — replaces the removed NEWS_PUBLISH_HOURS.
-  const rollupHour = rollupHourFromSchedule(schedule);
 
-  let type: DigestContentType | null = null;
-  let slot: SlotConfig | undefined;
-
-  if (
-    cfg.monthlyEnabled &&
-    lp.day === cfg.monthlyDay &&
-    lp.hour === rollupHour
-  ) {
-    type = 'monthly';
-  } else if (
-    cfg.weeklyEnabled &&
-    lp.weekday === cfg.weeklyDay &&
-    lp.hour === rollupHour
-  ) {
-    type = 'weekly';
-  } else {
-    const scheduled = schedule[lp.hour];
-    if (scheduled) {
-      type = 'daily';
-      slot = scheduled;
-    }
-  }
-  if (!type) return;
+  const { type, slot } = resolveDigestType(env, cfg, lp);
 
   try {
     await runDigest(env, cfg, type, logger, slot);
@@ -857,6 +865,29 @@ export async function runDigestGate(env: Env): Promise<void> {
       extra: { type, slot: slot?.tag },
     });
   }
+}
+
+/**
+ * Dev-only: run the REAL pipeline (engines → extraction → LLM → draft row) as
+ * if the cron had fired at the given local hour + tag. The dev-seed endpoint
+ * calls this so a test draft mirrors exactly what production would post for
+ * that slot, including per-slot engine/mode/token-budget overrides and the
+ * deep slot's D1-sourced behavior. Cost-justified: NEWS_DEV_SEED gates it.
+ */
+export async function runDigestFromHour(
+  env: Env,
+  hour: number,
+  tag: SlotTag,
+): Promise<{ slotKey: string }> {
+  const logger = makeLoggerFor(env);
+  const cfg = resolveDigestConfig(env);
+  const lp = { ...localParts(env.TIMEZONE), hour };
+  // Force the chosen tag onto the resolved type (a tag that isn't in
+  // NEWS_SCHEDULE still runs — the dev override is the point).
+  const slot = slotForTag(tag);
+  const { type } = resolveDigestType(env, cfg, lp);
+  await runDigest(env, cfg, type, logger, slot);
+  return { slotKey: computeSlotKey(type, lp, tag) };
 }
 
 /* ------------------------------------------------------------------ */

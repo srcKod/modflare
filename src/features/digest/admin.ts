@@ -11,7 +11,6 @@ import type { Env } from '../../core/types';
 import { makeLogger } from '../../core/logger';
 import { sendMessageDetailed } from '../../core/telegram';
 import { sanitizeTelegramHtml } from '../../shared/telegram-html';
-import { domainOf, normalizeUrl, sha256Hex } from '../../shared/sources';
 import {
   resolveDigestConfig,
   parseReactionSignals,
@@ -21,6 +20,8 @@ import {
   parseDraftsPath,
   rollupHourFromSchedule,
 } from './config';
+import type { SlotTag } from './config';
+import { runDigestFromHour, localParts } from './pipeline';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
 
@@ -216,12 +217,19 @@ async function handleDigestAction(
 }
 
 /**
- * Dev-only: insert a realistic fake draft so the review/edit/publish/discard
- * workflow can be exercised end-to-end without triggering the pipeline. Gated
- * behind ENABLE_NEWS_DIGEST + the (gitignored) NEWS_DEV_SEED toggle so it can
- * never run in production. Idempotent per call — each click makes a new draft.
+ * Dev-only: run the REAL pipeline (engines → extraction → LLM → draft row) as
+ * if the cron had fired at the chosen local hour + slot tag, so a test draft
+ * mirrors exactly what production would post — including per-slot engines,
+ * mode, token budget, the deep slot's D1-sourced behavior, and extraction.
+ * Cost-justified: gated behind the (gitignored) NEWS_DEV_SEED toggle, which
+ * is never set in production. Each call runs a fresh pipeline pass; the
+ * result appears in Pending drafts for review/edit/publish/discard.
  */
-async function handleDigestSeed(env: Env): Promise<Response> {
+async function handleDigestSeed(
+  env: Env,
+  hour: number,
+  tag: string,
+): Promise<Response> {
   if (!isSeedEnabled(env.NEWS_DEV_SEED)) {
     return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true to enable)' }, 404);
   }
@@ -230,81 +238,24 @@ async function handleDigestSeed(env: Env): Promise<Response> {
   if (!cfg.targetChatId) {
     return json({ error: 'NEWS_TARGET_CHAT_ID required to seed a draft' }, 400);
   }
-  const slot = `dev-seed-${Date.now()}`;
-  const title = '[dev] Sample digest — ملخص تجريبي';
-  // Body mirrors a real pipeline digest exactly: each item has an inline
-  // <a href="url">Source</a> link after the summary, em-dash separators, and
-  // a "— · N مصادر" footer. URLs below are stable public pages so the draft
-  // exercises the same HTML shape (and link targets) as a live post.
-  const src: { url: string; source: string }[] = [
-    { url: 'https://huggingface.co/papers/2609.11115', source: 'Hugging Face' },
-    { url: 'https://huggingface.co/papers/2609.12641', source: 'Hugging Face' },
-    { url: 'https://huggingface.co/papers/2609.10016', source: 'Hugging Face' },
-    { url: 'https://news.google.com/rss/articles/CBMimAFBVV95cUxOTjk0Z2I2Nnh4MktjOVV4QTdLSHk5STJaLXozZXltWUFGN2ZUNzJ0Sm9QQ1dpX3ZVT05rWXhTLWYwenRCVWVaOGlzWENfOVlVakhwS1NEVVphaFVENmlMWWF6eUVhUjZGUTNNLWVxVUVJRXhyR0xtVl9xVkw3amw0UlNSMjB1cW9fbEtCbkUtRkMyZTFQWUJ0Zg?oc=5', source: 'The Motley Fool' },
-    { url: 'https://arxiv.org/abs/2026.00000', source: 'arXiv' },
-  ];
-  const items = [
-    'Benchmark Radar: قاعدة بيانات حية لتقييم نماذج الذكاء الاصطناعي — نظام جديد يعمل كمحرك بحث وقاعدة بيانات شاملة لتسهيل اكتشاف ومعايرة مقاييس أداء نماذج اللغة الكبيرة.',
-    'تطوير نماذج الروبوتات الأساسية عبر تدريب الواجهة الكامنة — إطار عمل جديد يهدف إلى تحسين قدرة الروبوتات على التعميم وتقليل الاعتماد على الإشارات البصرية غير ذات الصلة.',
-    'MetroLLM-Bench: اختبار النماذج اللغوية في أنظمة النقل — معيار تقييم جديد يختبر قدرة النماذج اللغوية على العمل كأنظمة تشغيل لأكشاك خدمات المترو.',
-    'الأمن السيبراني كوجهة استثمارية كبرى للذكاء الاصطناعي — تصريحات تشير إلى أن الأمن السيبراني سيمثل السوق القادم والأكبر لتقنيات الذكاء الاصطناعي.',
-    'نمو مستدام لشركات الأمن السيبراني السحابي — تحليل يشير إلى تموضع الشركات التي تدمج بين الأمن السيبراني للسحابة والذكاء الاصطناعي لتحقيق نمو مستدام.',
-  ];
-  // Each content line opens with an RTL mark (U+200F) — exactly like a real
-  // pipeline digest — so Telegram renders every line right-to-left regardless
-  // of whether the item starts with Latin or Arabic text. The source label is
-  // italic (<i> inside <a>), matching the published style.
-  const RTL = '‏';
-  const body = [
-    `${RTL}📰 <b>أبرز مستجدات التكنولوجيا والذكاء الاصطناعي</b>`,
-    '',
-    ...items.flatMap((text, i) => [
-      `${RTL}• <b>${text}</b> <a href="${src[i].url}"><i>${src[i].source}</i></a>`,
-      '',
-    ]),
-    `${RTL}— · ${items.length} مصادر`,
-  ].join('\n');
+  // The tag is what the cron would run at that hour; unknown/empty falls
+  // back to the resolved schedule entry (or a plain daily if none).
+  const schedule = parseSchedule(env.NEWS_SCHEDULE);
+  const validTag =
+    tag === 'headlines' || tag === 'trending' || tag === 'papers' || tag === 'deep'
+      ? tag
+      : undefined;
+  const effectiveTag: SlotTag = validTag ?? (schedule[hour]?.tag as SlotTag | undefined) ?? 'headlines';
 
-  const insert = await env.DB
-    .prepare(
-      `INSERT INTO digest_posts
-         (slot_key, type, run_at, mode, domain, target_chat_id,
-          title, body, body_original, status, provider, model)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
-    )
-    .bind(
-      slot,
-      'daily',
-      new Date().toISOString(),
-      cfg.mode,
-      cfg.effectiveDomain,
-      cfg.targetChatId,
-      title,
-      body,
-      body,
-      cfg.llm.baseUrl,
-      cfg.llm.model,
-    )
-    .run();
-  const postId = insert.meta.last_row_id as number | undefined;
-
-  // Source rows mirror the inline links in the body above (same URLs), so the
-  // draft's digest_items table matches a real run's shape. sha256Hex is async —
-  // it MUST be awaited; passing the raw Promise into .bind() makes D1 reject
-  // the statement (the old code silently inserted no item rows at all).
-  for (const s of src) {
-    const url = s.url;
-    const urlHash = await sha256Hex(normalizeUrl(url));
-    await env.DB
-      .prepare(
-        `INSERT OR IGNORE INTO digest_items (url_hash, url, title, source, digest_post_id)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .bind(urlHash, url, s.source.slice(0, 300), domainOf(url) || s.source, postId ?? null)
-      .run();
+  try {
+    const { slotKey } = await runDigestFromHour(env, hour, effectiveTag);
+    return json({ ok: true, slot_key: slotKey, tag: effectiveTag, hour });
+  } catch (err) {
+    return json(
+      { error: `seed pipeline failed: ${String(err).slice(0, 300)}` },
+      500,
+    );
   }
-
-  return json({ ok: true, id: postId, slot_key: slot });
 }
 
 /**
@@ -470,6 +421,7 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     fetchFulltext: cfg.fetchFulltext,
     targetChatId: cfg.targetChatId,
     rollupHour: rollupHourFromSchedule(parseSchedule(env.NEWS_SCHEDULE)),
+    localHour: localParts(env.TIMEZONE).hour,
     weeklyEnabled: cfg.weeklyEnabled,
     monthlyEnabled: cfg.monthlyEnabled,
     language: cfg.language,
@@ -523,14 +475,31 @@ export const digestAdminRoutes: AdminRoute[] = [
   // entry would make the other method fall through to 404.
   { method: 'GET', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
   { method: 'POST', prefix: '/api/digest/drafts', handler: handleDraftsRoute },
-  // Dev-only seed (NEWS_DEV_SEED=true): insert a fake draft to exercise the
-  // review/edit/publish/discard workflow without running the pipeline.
+  // Dev-only seed (NEWS_DEV_SEED=true): run the REAL pipeline from a chosen
+  // local hour + slot tag so a test draft mirrors what the cron would post —
+  // exercises engines, extraction, LLM, and the draft workflow end-to-end.
   {
     method: 'POST',
     rest: '/api/digest/dev/seed',
     handler: async (request, env) => {
       if (!csrfOk(request)) return json({ error: 'CSRF check failed' }, 403);
-      return handleDigestSeed(env);
+      let hour: number = -1;
+      let tag = '';
+      try {
+        const body = (await request.json().catch(() => ({}))) as {
+          hour?: unknown;
+          tag?: unknown;
+        };
+        if (typeof body.hour === 'number' && Number.isInteger(body.hour)) {
+          hour = body.hour;
+        }
+        if (typeof body.tag === 'string') tag = body.tag;
+      } catch {
+        // body parse failure — fall through with defaults
+      }
+      // Default: the current local hour (what a cron tick RIGHT NOW would run).
+      if (hour < 0 || hour > 23) hour = localParts(env.TIMEZONE).hour;
+      return handleDigestSeed(env, hour, tag);
     },
   },
   { method: 'GET', rest: '/api/digest/stats', handler: (request, env) => handleDigestStats(request, env) },

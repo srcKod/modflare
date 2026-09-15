@@ -174,7 +174,7 @@ export function rollupHourFromSchedule(
 /** The engine set + mode + token budget for a given slot tag. Paid/credit
  *  engines (tavily/exa/jsearch) gate on their key inside the engine fns, so
  *  listing them is safe even when unset — they simply no-op. */
-function slotForTag(tag: SlotTag): SlotConfig {
+export function slotForTag(tag: SlotTag): SlotConfig {
   switch (tag) {
     case 'papers':
       return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf', 's2'], maxTokens: 3000 };

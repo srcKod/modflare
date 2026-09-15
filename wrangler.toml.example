@@ -179,9 +179,11 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 # NEWS_ENABLE_WEEKLY = "true"       # weekly roundup (NEWS_WEEKLY_DAY, default Sunday)
 # NEWS_ENABLE_MONTHLY = "true"      # monthly deep dive (NEWS_MONTHLY_DAY, default 1)
 # NEWS_SPONSOR_TEXT = "Brought to you by ..."   # appended post-sanitize, never LLM-generated
-# Dev-only: 'true' enables POST /api/digest/dev/seed (inserts a fake draft to
-# exercise the review/edit/publish/discard workflow without the pipeline).
-# NEVER enable in production — the endpoint is absent (404) by default.
+# Dev-only: 'true' enables POST /api/digest/dev/seed — runs the REAL pipeline
+# (engines → extraction → LLM → draft row) from a chosen local hour + slot tag,
+# so a test draft mirrors exactly what a cron tick at that slot would post.
+# Result lands in Pending drafts for review/edit/publish/discard.
+# Consumes real API quota — NEVER enable in production (endpoint 404s there).
 # NEWS_DEV_SEED = "true"
 
 [[d1_databases]]

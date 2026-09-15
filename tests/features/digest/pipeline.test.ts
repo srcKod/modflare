@@ -30,3 +30,21 @@ describe('computeSlotKey', () => {
     );
   });
 });
+
+describe('runDigestFromHour slot-key shape', () => {
+  // The dev-seed endpoint executes the real pipeline from a chosen hour; its
+  // contract is that the resulting slot key equals what the cron tick at that
+  // hour would produce (date + hour + tag), so a seeded draft collides with —
+  // i.e. verifies exactly the slot the schedule owns.
+  const lp = { date: '2026-09-15', hour: 9 };
+  it('tags the slot key with the chosen tag (intraday shape)', () => {
+    expect(computeSlotKey('daily', lp, 'headlines')).toBe('2026-09-15T09:headlines');
+    expect(computeSlotKey('daily', lp, 'deep')).toBe('2026-09-15T09:deep');
+  });
+
+  it('uses the chosen hour, not the current wall-clock hour', () => {
+    // lp.hour is what runDigestFromHour overrides localParts with.
+    expect(computeSlotKey('daily', { date: '2026-09-15', hour: 21 }, 'trending'))
+      .toBe('2026-09-15T21:trending');
+  });
+});

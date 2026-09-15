@@ -580,9 +580,9 @@ async function loadDigest(){
     if(setr.ok){
       const settings=await setr.json();
       document.getElementById('dg-settings').innerHTML=kvTable(settings);
-      // Hide the dev-seed button unless the toggle is on (endpoint 04s anyway).
-      const seedBtn=document.getElementById('dg-seed');
-      if(seedBtn)seedBtn.hidden=!settings.dev_seed;
+      // Hide the dev-seed controls unless the toggle is on (endpoint 04s anyway).
+      const seedWrap=document.getElementById('dg-seed-wrap');
+      if(seedWrap)seedWrap.hidden=!settings.dev_seed;
     }
     dgToast('Digest refreshed.','ok');
   }catch(err){
@@ -691,16 +691,21 @@ document.getElementById('dg-refresh').addEventListener('click',()=>{
   closeEditor();   // a stale editor open across a refresh shows old state (§23.4)
   loadDigest();
 });
-// Dev-only: insert a fake draft to exercise the review/edit/publish flow.
-// Gated server-side by NEWS_DEV_SEED — returns 404 in production.
+// Dev-only: run the REAL pipeline for the chosen local hour + tag and save the
+// result as a draft so the review/edit/publish/discard workflow is exercised
+// exactly as a cron tick would. Gated server-side by NEWS_DEV_SEED — returns
+// 404 in production.
 document.getElementById('dg-seed').addEventListener('click',async()=>{
-  if(!window.confirm('Insert a test draft? It will appear in Pending drafts and can be reviewed, edited, published or discarded.'))return;
+  const hour=parseInt(document.getElementById('dg-seed-hour').value,10);
+  const tag=document.getElementById('dg-seed-tag').value;
+  if(!window.confirm('Run the real pipeline for '+tag+' @ '+String(hour).padStart(2,'0')+
+    ' (engines + extraction + LLM + draft)? This consumes real API quota.'))return;
   const btn=document.getElementById('dg-seed');
   dgSetLoading(btn,true);
   try{
-    const r=await dgPost('/api/digest/dev/seed');
+    const r=await dgPost('/api/digest/dev/seed',{hour,tag});
     const d=await r.json().catch(()=>({}));
-    if(r.ok){dgToast('Test draft inserted — check Pending drafts.','ok');loadDigest();}
+    if(r.ok){dgToast('Draft for slot '+d.slot_key+' saved — check Pending drafts.','ok');loadDigest();}
     else{const m=d.error||('Failed ('+r.status+')');dgToast(m,'err');}
   }catch(err){dgToast('Seed failed: '+(err&&err.message||err),'err');}
   finally{dgSetLoading(btn,false);}
