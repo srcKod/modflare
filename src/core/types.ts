@@ -60,6 +60,13 @@ export interface Env {
    */
   ALLOWED_GROUP_IDS?: string;
   /**
+   * Moderation master switch (env fallback layer). 'false' = moderation is
+   * off: group messages pass through untouched (each skip is logged). Can
+   * also be flipped at runtime from the admin panel's Settings tab (D1
+   * `settings` row `moderation_enabled`, which SHADOWS this var).
+   */
+  ENABLE_MODERATION?: string;
+  /**
    * When true and a message is flagged+deleted, post a kind, harmless funny
    * reply to the group (in the chat's language).
    */

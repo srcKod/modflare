@@ -317,18 +317,84 @@ async function loadQueue(){
 document.getElementById('bq-refresh').addEventListener('click',loadQueue);
 document.getElementById('bq-kind').addEventListener('change',loadQueue);
 
-/* ---- Tabs: audit (default) | bot-queue, deep-linked via ?tab= ---- */
+/* ---- Settings tab: runtime config overrides (generated from defs) ---- */
+async function apiPost(url,payload){
+  return fetch(base+url,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},
+    body:JSON.stringify(payload||{})
+  });
+}
+async function loadSettings(){
+  const tbody=document.getElementById('st-rows');
+  try{
+    const r=await fetch(base+'/api/settings',{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json();
+    if(!d.defs||!d.defs.length){
+      tbody.innerHTML='<tr class="empty"><td colspan="4">No editable settings.</td></tr>';
+      return;
+    }
+    const byKey={};
+    d.values.forEach(v=>{byKey[v.key]=v;});
+    tbody.innerHTML=d.defs.map(def=>{
+      const v=byKey[def.key]||{value:'',source:'default'};
+      const input=def.kind==='boolean'
+        ?'<input type="checkbox" data-key="'+esc(def.key)+'"'+(v.value==='true'?' checked':'')+'>'
+        :'<input type="text" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:240px">';
+      const src='<span class="badge'+(v.source==='override'?' due':'')+'">'+esc(v.source)+'</span>';
+      const reset='<button class="st-reset" data-key="'+esc(def.key)+'"'+(v.source==='override'?'':' disabled')+' title="Delete the override; the env/default value applies again">Reset</button>';
+      return '<tr>'+
+        '<td title="'+esc(def.description)+'"><b>'+esc(def.label)+'</b><br><span class="mono" style="font-size:.75em">'+esc(def.key)+'</span></td>'+
+        '<td>'+input+'</td>'+
+        '<td>'+src+'</td>'+
+        '<td>'+reset+'</td>'+
+      '</tr>';
+    }).join('');
+    tbody.querySelectorAll('input[data-key]').forEach(inp=>{
+      inp.addEventListener('change',async()=>{
+        const key=inp.getAttribute('data-key');
+        const value=inp.type==='checkbox'?String(inp.checked):inp.value;
+        try{
+          const r=await apiPost('/api/settings',{key,value});
+          const d=await r.json().catch(()=>({}));
+          if(r.ok){loadSettings();}
+          else{alert('Save failed: '+(d.error||('HTTP '+r.status)));}
+        }catch(err){alert('Save failed: '+(err&&err.message||err));}
+      });
+    });
+    tbody.querySelectorAll('.st-reset').forEach(btn=>{
+      btn.addEventListener('click',async()=>{
+        const key=btn.getAttribute('data-key');
+        try{
+          const r=await apiPost('/api/settings/reset',{key});
+          const d=await r.json().catch(()=>({}));
+          if(r.ok){loadSettings();}
+          else{alert('Reset failed: '+(d.error||('HTTP '+r.status)));}
+        }catch(err){alert('Reset failed: '+(err&&err.message||err));}
+      });
+    });
+  }catch(err){
+    tbody.innerHTML='<tr class="empty"><td colspan="4">Settings load failed: '+
+      esc(err&&err.message||String(err))+'</td></tr>';
+  }
+}
+document.getElementById('st-refresh').addEventListener('click',loadSettings);
+
+/* ---- Tabs: audit (default) | bot-queue | settings, deep-linked via ?tab= ---- */
 function currentTab(){
-  return new URLSearchParams(location.search).get('tab')==='bot-queue'
-    ?'bot-queue':'audit';
+  const t=new URLSearchParams(location.search).get('tab');
+  return t==='bot-queue'||t==='settings'?t:'audit';
 }
 function showTab(t){
   document.getElementById('tab-audit').hidden=(t!=='audit');
   document.getElementById('tab-bot-queue').hidden=(t!=='bot-queue');
+  document.getElementById('tab-settings').hidden=(t!=='settings');
   document.querySelectorAll('.tab').forEach(a=>{
     a.classList.toggle('active',a.getAttribute('data-tab')===t);
   });
   if(t==='bot-queue'){loadQueue();}
+  else if(t==='settings'){loadSettings();}
   else{loadStats();loadRows();}
 }
 document.querySelectorAll('.tab').forEach(a=>{

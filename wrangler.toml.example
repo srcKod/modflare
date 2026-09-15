@@ -76,6 +76,10 @@ ADMIN_PANEL_PATH = "/admin"
 
 # Optional funny reply after a flagged message is deleted. Set to "true" to
 # enable, and choose the language for the reply.
+# NOTE: the master switches (ENABLE_MODERATION / ENABLE_FUNRESPONSE /
+# ENABLE_SELF_CLEAN) can be flipped at runtime from the admin panel's Settings
+# tab — the D1 `settings` table (migration 0007) shadows each env var, and
+# deleting a row reverts to the value configured here.
 ENABLE_FUNRESPONSE = "true"
 FUNRESPONSE_LANGUAGE = "Arabic"   # or "Spanish", "French", "German"...
 # Optional dialect of the language above, e.g. "Egyptian", "Gulf",

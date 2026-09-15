@@ -1,0 +1,151 @@
+/**
+ * Runtime settings: a D1-backed override layer over deploy-time env vars.
+ *
+ * Resolution order (highest wins):
+ *   1. D1 `settings` row   — written from the admin panel, no redeploy
+ *   2. env var             — deploy-time (wrangler.toml / secret)
+ *   3. coded default       — per-def
+ *
+ * Safety model:
+ *  - Only keys in SETTING_DEFS are resolvable; the API rejects everything else,
+ *    so the UI and the validator can never disagree.
+ *  - Secrets NEVER live here (no BOT_TOKEN/keys) — secrets stay in wrangler
+ *    secrets; the panel can only see booleans like the master switches.
+ *  - Fail-open: a DB hiccup resolves to env/default values (log a console
+ *    warning) so the settings layer can never take the pipeline down.
+ */
+
+import type { Env } from './types';
+
+/** One UI-editable setting. `envVar` seeds the fallback value from the
+ *  deploy-time environment; `default` applies when the env var is unset. */
+export interface SettingDef {
+  /** Canonical key — also the D1 row key and the env-var shadow name basis. */
+  key: string;
+  label: string;
+  description: string;
+  kind: 'boolean' | 'string' | 'number';
+  /** Deploy-time env var that seeds the fallback (e.g. ENABLE_MODERATION). */
+  envVar?: string;
+  /** Coded default when neither an override nor the env var is present. */
+  default: string;
+  /** Extra validation beyond kind parsing; returns an error message or null. */
+  validate?: (raw: string) => string | null;
+  /** UI grouping (panel renders one section per group). */
+  group: 'moderation' | 'general';
+}
+
+/** The allowlist. Extend per feature; never accept unlisted keys from the API. */
+export const SETTING_DEFS: SettingDef[] = [
+  {
+    key: 'moderation_enabled',
+    label: 'Moderation master switch',
+    description:
+      'When off, group messages pass through unmoderated (each skip is logged). ' +
+      'Shadows the ENABLE_MODERATION env var.',
+    kind: 'boolean',
+    envVar: 'ENABLE_MODERATION',
+    default: 'true',
+    group: 'moderation',
+  },
+  {
+    key: 'funresponse_enabled',
+    label: 'Funny responses',
+    description: 'Occasional humorous replies on clean messages. Shadows ENABLE_FUNRESPONSE.',
+    kind: 'boolean',
+    envVar: 'ENABLE_FUNRESPONSE',
+    default: 'false',
+    group: 'moderation',
+  },
+  {
+    key: 'selfclean_enabled',
+    label: 'Bot message self-clean',
+    description:
+      'Delete the bot’s own service/quote replies after a while. Shadows ENABLE_SELF_CLEAN.',
+    kind: 'boolean',
+    envVar: 'ENABLE_SELF_CLEAN',
+    default: 'false',
+    group: 'moderation',
+  },
+];
+
+/** Normalized truthy/falsey for boolean settings (env vars may arrive as
+ *  unquoted booleans pre-coerced to strings — anything but the false set is
+ *  treated as on, matching the codebase's `=== 'true'`... inverted: we fail
+ *  OPEN, so only an explicit false disables). */
+export function settingBool(v: string | undefined, fallback: boolean): boolean {
+  if (v === undefined || v === '') return fallback;
+  const s = v.trim().toLowerCase();
+  if (s === 'false' || s === '0' || s === 'off' || s === 'no') return false;
+  if (s === 'true' || s === '1' || s === 'on' || s === 'yes') return true;
+  return fallback;
+}
+
+/** Load all D1 overrides in one query. Undefined DB or any error → {} (the
+ *  caller falls back to env/defaults; the settings layer never breaks the
+ *  pipeline). */
+export async function loadSettingOverrides(
+  db: D1Database | undefined,
+): Promise<Record<string, string>> {
+  if (!db) return {};
+  try {
+    const res = await db
+      .prepare('SELECT key, value FROM settings')
+      .all<{ key: string; value: string }>();
+    const out: Record<string, string> = {};
+    for (const r of res.results ?? []) out[r.key] = r.value;
+    return out;
+  } catch (err) {
+    // Fail open: a settings-read failure must never take a feature down.
+    console.error(`settings read failed: ${err}`);
+    return {};
+  }
+}
+
+/** Effective value for one key: D1 override → env var → coded default.
+ *  Unlisted keys resolve to undefined (the allowlist is the contract). */
+export function resolveSetting(
+  env: Env,
+  overrides: Record<string, string>,
+  key: string,
+): string | undefined {
+  const def = SETTING_DEFS.find((d) => d.key === key);
+  if (!def) return undefined;
+  if (overrides[key] !== undefined) return overrides[key];
+  const envVal = def.envVar
+    ? (env as unknown as Record<string, string | undefined>)[def.envVar]
+    : undefined;
+  if (envVal !== undefined && envVal !== '') return String(envVal);
+  return def.default;
+}
+
+/** Where a key's effective value came from — the panel shows this per row. */
+export function settingSource(
+  env: Env,
+  overrides: Record<string, string>,
+  key: string,
+): 'override' | 'env' | 'default' {
+  const def = SETTING_DEFS.find((d) => d.key === key);
+  if (overrides[key] !== undefined) return 'override';
+  if (def?.envVar) {
+    const envVal = (env as unknown as Record<string, string | undefined>)[def.envVar];
+    if (envVal !== undefined && envVal !== '') return 'env';
+  }
+  return 'default';
+}
+
+/** Kind-aware validation for a raw value. Returns an error message or null. */
+export function validateSettingValue(def: SettingDef, raw: string): string | null {
+  const v = raw.trim();
+  if (def.kind === 'boolean') {
+    const s = v.toLowerCase();
+    if (!['true', 'false', '1', '0', 'on', 'off', 'yes', 'no'].includes(s)) {
+      return 'must be a boolean (true/false)';
+    }
+  } else if (def.kind === 'number') {
+    if (!/^-?\d+(\.\d+)?$/.test(v)) return 'must be a number';
+  } else if (!v) {
+    return 'must not be empty';
+  }
+  return def.validate ? def.validate(v) : null;
+}

@@ -10,6 +10,7 @@
 <nav class="tabs">
   <a class="tab" data-tab="audit" href="?tab=audit">Audit log</a>
   <a class="tab" data-tab="bot-queue" href="?tab=bot-queue">Bot queue</a>
+  <a class="tab" data-tab="settings" href="?tab=settings">Settings</a>
 </nav>
 <main>
   <section id="tab-audit">
@@ -67,6 +68,24 @@
         <th>Attempts</th>
       </tr></thead>
       <tbody id="bq-rows"><tr class="empty"><td colspan="7">Loading...</td></tr></tbody>
+    </table>
+    </div>
+  </section>
+  <section id="tab-settings" hidden>
+    <div class="notice" id="st-notice" hidden></div>
+    <p class="info">Values marked <span class="badge due">override</span> come from the
+    runtime settings table and shadow the deployed env var. <em>Reset</em> deletes the
+    override and falls back to the env/default. Changes apply immediately — no redeploy.</p>
+    <div class="filters"><button id="st-refresh">Refresh</button></div>
+    <div class="table-wrap">
+    <table class="st-table">
+      <thead><tr>
+        <th>Setting</th>
+        <th>Value</th>
+        <th>Source</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="st-rows"><tr class="empty"><td colspan="4">Loading…</td></tr></tbody>
     </table>
     </div>
   </section>

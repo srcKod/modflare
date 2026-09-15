@@ -188,6 +188,24 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/**
+ * CSRF guard for state-changing panel endpoints: a cross-site page can't forge
+ * our requests because a browser always attaches its own Origin, and a forged
+ * Origin won't match the panel host. The panel's own JS sends same-origin
+ * fetches (Origin = panel host) implicitly; curl-style clients must send the
+ * panel URL as Origin explicitly. Requests without an Origin are rejected —
+ * same-site form posts always carry one in practice.
+ */
+export function csrfOk(request: Request): boolean {
+  const origin = request.headers.get('Origin') || request.headers.get('Referer');
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === new URL(request.url).host;
+  } catch {
+    return false;
+  }
+}
+
 function base64urlEncode(s: string): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }

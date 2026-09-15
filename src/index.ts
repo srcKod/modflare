@@ -8,6 +8,7 @@ import { makeLogger, pruneExpiredAudit } from './core/logger';
 import { adminRoutesOf, dispatchCron, dispatchUpdate } from './core/router';
 import type { FeatureManifest } from './core/router';
 import { handleAdmin } from './core/admin';
+import { settingsAdminRoutes } from './core/settings-admin';
 import type { Env, TelegramUpdate } from './core/types';
 import { moderationFeature } from './features/moderation';
 
@@ -42,12 +43,13 @@ export default {
     env: Env,
     ctx: ExecutionContext,
   ): Promise<Response> {
-    // Admin panel routes (login, panel, feature-contributed APIs). Only
-    // active when ADMIN_PANEL_TOKEN is set; otherwise falls through.
+    // Admin panel routes (login, panel, feature-contributed APIs + the
+    // cross-feature settings API). Only active when ADMIN_PANEL_TOKEN is set;
+    // otherwise falls through.
     const adminRes = await handleAdmin(
       request,
       env,
-      adminRoutesOf(FEATURES),
+      [...adminRoutesOf(FEATURES), ...settingsAdminRoutes],
     );
     if (adminRes) return adminRes;
 

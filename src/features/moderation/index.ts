@@ -9,9 +9,10 @@
  *   3. LLM verdict (fail-open) → delete + optional fun reply, or keep.
  */
 
-import { envList } from '../../core/config';
+import { envList, envBool } from '../../core/config';
 import { makeLogger } from '../../core/logger';
 import type { AuditLogger } from '../../core/logger';
+import { loadSettingOverrides, resolveSetting, settingBool } from '../../core/settings';
 import {
   buildUserMention,
   deleteMessage,
@@ -70,6 +71,22 @@ async function handleModerationUpdate(
 
   // Only moderate in groups (and supergroups). Ignore private chats/admin DMs.
   if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return true;
+
+  // Master switch (runtime settings → ENABLE_MODERATION env → default on).
+  // Off means messages pass through untouched; the skip is logged so the
+  // audit trail shows moderation was deliberately off, not broken. Checked
+  // AFTER the group gate so private/DM noise doesn't burn a settings read.
+  const overrides = await loadSettingOverrides(env.DB);
+  const moderationOn =
+    settingBool(
+      resolveSetting(env, overrides, 'moderation_enabled'),
+      true,
+    ) &&
+    envBool(env.ENABLE_MODERATION, true);
+  if (!moderationOn) {
+    await logger.debug('moderation_disabled', { ...ctx });
+    return true;
+  }
 
   // Optional chat whitelist. When ALLOWED_GROUP_IDS is set, only moderate in
   // those specific chats (numeric IDs, negatives for supergroups). Any other
