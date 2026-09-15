@@ -445,6 +445,10 @@ async function runDigest(
   let candidates: DigestCandidate[] = [];
   let historyCandidates: DigestCandidate[] = [];
   let prompt = '';
+  // Raw engine/extraction text per URL, captured verbatim before the LLM sees
+  // the candidates. Populated only when NEWS_FETCH_FULLTEXT drives an extract;
+  // looked up when archiving selected items in digest_items.extracted_text.
+  const extractedByUrl = new Map<string, string>();
   if (type === 'daily' || type === 'weekly' || type === 'monthly') {
     if (type !== 'daily') {
       const rows = await loadHistory(
@@ -517,6 +521,9 @@ async function runDigest(
           } catch {
             // extraction failure — summarize from snippet/title
           }
+          // Remember the raw (post-extraction) text verbatim before the LLM
+          // sees it — this is what gets archived in digest_items.extracted_text.
+          if (c.snippet) extractedByUrl.set(c.url, c.snippet);
         }
       }
       prompt = buildDailyPrompt(cfg, candidates);
@@ -588,13 +595,17 @@ async function runDigest(
     .run();
   const postId = insert.meta.last_row_id as number | undefined;
 
-  // Record items (dedupe by URL hash across runs).
+  // Record items (dedupe by URL hash across runs). When full-text was fetched,
+  // archive the raw extracted text verbatim — powers future re-summarize /
+  // source-Q&A features without re-fetching. NULL otherwise (rollup items have
+  // no source text; non-fulltext runs didn't extract any).
   for (const it of parsed.items) {
     const h = await sha256Hex(normalizeUrl(it.url));
     await db
       .prepare(
-        `INSERT OR IGNORE INTO digest_items (url_hash, url, title, source, digest_post_id)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT OR IGNORE INTO digest_items
+           (url_hash, url, title, source, digest_post_id, extracted_text)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         h,
@@ -602,6 +613,7 @@ async function runDigest(
         it.title.slice(0, 300),
         domainOf(it.url) || 'digest',
         postId ?? null,
+        extractedByUrl.get(it.url) ?? null,
       )
       .run();
   }
