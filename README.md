@@ -149,6 +149,7 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `ADMIN_USERNAMES` | Comma-separated admin usernames (local match, no API call) | *none → use API* |
 | `ADMIN_USER_IDS` | Comma-separated admin numeric IDs (immune to username changes) | *none → use API* |
 | `ALLOWED_GROUP_IDS` *(optional)* | Comma-separated numeric chat IDs the bot is allowed to moderate (supergroup IDs are negative like `-1001234567890`). Unset/empty = all groups | *none = all groups* |
+| `ENABLE_MODERATION` | Master switch: when `false`, group messages pass through unmoderated (each skip is logged). Can also be flipped at runtime from the panel's Settings tab | `true` |
 | `ENABLE_FUNRESPONSE` | Post a kind/harmless funny reply after a flagged deletion | `false` |
 | `FUNRESPONSE_LANGUAGE` | Language for the funny reply | `English` |
 | `FUNRESPONSE_DIALECT` | Optional dialect of the language (e.g. `Egyptian` / `Gulf` / `Levantine` for Arabic) | *none → no dialect hint* |
@@ -199,6 +200,16 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 > or `@cf/meta/llama-4-scout-17b-16e-instruct`.
 
 ### Behaviors explained
+
+**Master switch (`ENABLE_MODERATION`)**
+When set to `"false"`, the bot passes every group message through
+unmoderated — no LLM call, no deletion. Each pass-through is logged at
+debug level (`moderation_disabled`) so the audit trail shows moderation was
+deliberately off, not broken. Unset or `"true"` keeps the default
+on. The switch can also be flipped at runtime from the admin panel's
+Settings tab (a D1 `settings` row that shadows the env var), so you can
+turn moderation off during, say, a maintainer takeover or an incident,
+without redeploying.
 
 **Active window (`START_HOUR` / `END_HOUR` / `TIMEZONE`)**
 The bot only moderates during this window. Cross-midnight ranges are supported
@@ -477,6 +488,10 @@ the token, and the panel returns an HttpOnly signed cookie (12h TTL).
 - **Bot queue tab** (`?tab=bot-queue`) — live view of the self-clean queue
   (`ENABLE_SELF_CLEAN`): message ID, chat, reply body, kind filter, age with
   a `due` badge, and retry attempts.
+- **Settings tab** (`?tab=settings`) — runtime configuration: the
+  moderation master switch (`ENABLE_MODERATION`), fun-reply, and self-clean
+  toggles. A value edited here shadows the deployed env var until you
+  *Reset* it back; no redeploy needed. Every change is audit-logged.
 
 Change `ADMIN_PANEL_PATH` in `wrangler.toml [vars]` to mount the panel at a
 different URL prefix.
