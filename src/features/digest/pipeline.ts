@@ -54,14 +54,14 @@ function langHint(cfg: DigestConfig): string {
     : cfg.language;
 }
 
-function buildDailyPrompt(cfg: DigestConfig, candidates: DigestCandidate[]): string {
+export function buildDailyPrompt(cfg: DigestConfig, candidates: DigestCandidate[]): string {
   const lines = [
     `You are the editor of a professional technology digest channel on Telegram.`,
     `You receive JSON candidates from the last 24-48h (fields: n, tag, title, source, url, date, snippet).`,
     `Select the ${cfg.maxItems} most significant, distinct items (prefer trending signals; skip minor news and near-duplicates).`,
     `Write the final post as Telegram HTML:`,
     `- First line: 📰 <b>a headline for today's digest</b>`,
-    `- Then for each selected item, one block: • <b>item title</b> — a 1-2 sentence factual, professional summary (no hype, no invented facts), followed by a source link line: <a href="s{n}">{source}</a> where {n} is that item's candidate number and {source} is its source name.`,
+    `- Then for each selected item, one block: • <b>item title</b> — a 1-2 sentence factual, professional summary (no hype, no invented facts), with the source appended INLINE at the end of the same line in italic: <a href="s{n}"><i>{source}</i></a> where {n} is that item's candidate number and {source} is its source name. Never put the source on a separate line.`,
     `- End with a line: — · {n} sources`,
     `Write ONLY in ${langHint(cfg)}; candidates may be in English, Chinese, or Arabic — always output in ${langHint(cfg)}.`,
     `Use only these Telegram HTML tags: <b> <i> <u> <s> <a href="s{n}"> <code> <blockquote>. Escape & < > in visible text.`,
@@ -99,7 +99,7 @@ function buildHistoryPrompt(
     `Fields: n, title, source, url, reactions (audience 👍 signal). Pick the top ${type === 'weekly' ? 5 : 10} by significance + reactions, group into 1-3 short themes, and note the biggest story.`,
     `Write the post as Telegram HTML in ${langHint(cfg)}:`,
     `- First line: ${type === 'weekly' ? '🗓' : '📆'} <b>${period} roundup headline</b>`,
-    `- Themes as short <b>theme</b> lines with 1-line items (title + source link <a href="s{n}">{source}</a> where {n} is the item's number)`,
+    `- Themes as short <b>theme</b> lines with 1-line items (title, then the source appended inline in italic: <a href="s{n}"><i>{source}</i></a> where {n} is the item's number)`,
     `- End with: — · top pick: <the biggest story title>`,
     `Use only tags <b> <i> <a href="s{n}"> <blockquote>. Hard cap 3500 characters.`,
     `IMPORTANT: link hrefs MUST be exactly href="s{n}" — NEVER write full URLs anywhere in your response. The server replaces s{n} with the real URL.`,
