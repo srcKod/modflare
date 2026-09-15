@@ -481,6 +481,10 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     // Intraday schedule as configured (server authoritative). Empty object
     // when NEWS_SCHEDULE is unset — the panel falls back to publishHours.
     schedule: parseSchedule(env.NEWS_SCHEDULE),
+    // Lets the panel hide the "Insert test draft" button unless the dev seed
+    // toggle is on — the endpoint is 04'd server-side otherwise, so there's no
+    // point offering a button that can only fail.
+    dev_seed: isSeedEnabled(env.NEWS_DEV_SEED),
   });
 }
 

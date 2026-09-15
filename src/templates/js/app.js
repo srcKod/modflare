@@ -426,18 +426,25 @@ function dgToast(msg,kind){
     setTimeout(()=>t.remove(),280);
   },ms);
 }
-let dgLoading=0;          // refcount so nested loads share one spinner pass
+// Per-button refcount. A global counter would couple the Refresh and Insert
+// buttons: seed's finally decrements the shared total while loadDigest() is
+// still counting up for Refresh, so the Insert button never returns to normal.
+const dgLoading=new WeakMap();
 function dgSetLoading(btn,on){
+  const cur=dgLoading.get(btn)||0;
   if(on){
     if(!btn.dataset.dgLabel)btn.dataset.dgLabel=btn.textContent;
-    dgLoading++;
+    dgLoading.set(btn,cur+1);
     btn.classList.add('dg-loading');
     btn.textContent='Working…';
   }else{
-    dgLoading=Math.max(0,dgLoading-1);
-    if(dgLoading===0){
+    const next=Math.max(0,cur-1);
+    if(next===0){
+      dgLoading.delete(btn);
       btn.classList.remove('dg-loading');
-      if(btn.dataset.dgLabel){btn.textContent=btn.dataset.dgLabel;}
+      if(btn.dataset.dgLabel)btn.textContent=btn.dataset.dgLabel;
+    }else{
+      dgLoading.set(btn,next);
     }
   }
 }
@@ -571,7 +578,11 @@ async function loadDigest(){
     // Settings as readable key/value rows
     const setr=await dgGet('/api/digest/settings');
     if(setr.ok){
-      document.getElementById('dg-settings').innerHTML=kvTable(await setr.json());
+      const settings=await setr.json();
+      document.getElementById('dg-settings').innerHTML=kvTable(settings);
+      // Hide the dev-seed button unless the toggle is on (endpoint 04s anyway).
+      const seedBtn=document.getElementById('dg-seed');
+      if(seedBtn)seedBtn.hidden=!settings.dev_seed;
     }
     dgToast('Digest refreshed.','ok');
   }catch(err){
