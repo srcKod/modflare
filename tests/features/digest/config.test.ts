@@ -146,6 +146,19 @@ describe('parseSchedule (NEWS_SCHEDULE)', () => {
     expect(s[20].newsEngines).toEqual(['hn']);
   });
 
+  it('keeps trending topic-agnostic so HN match-all returns hits', () => {
+    const s = parseSchedule('9:headlines,20:trending');
+    // Regression guard: an HN Algolia query intersects topics with titles via
+    // full-text matching, and generic topic phrases ("artificial intelligence")
+    // never appear verbatim in HN titles — so any inherited topic filter makes
+    // the query return zero hits and the slot silently skips with no_candidates.
+    // trending must therefore gather match-all (empty topics → query=).
+    expect(s[20].topics).toEqual([]);
+    // headlines, by contrast, is keyword-targeted — it must NOT pin topics so it
+    // inherits the resolved preset's topic list.
+    expect(s[9].topics).toBeUndefined();
+  });
+
   it('skips malformed entries, out-of-range hours and unknown tags', () => {
     const s = parseSchedule('9:headlines,abc,25:papers,4:banana,14:');
     expect(s[9].tag).toBe('headlines');

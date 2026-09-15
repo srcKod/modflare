@@ -403,6 +403,7 @@ async function runDigest(
       mode: slot.mode,
       newsEngines: slot.newsEngines,
       scholarEngines: slot.scholarEngines,
+      ...(slot.topics !== undefined ? { topics: slot.topics } : {}),
     };
   }
 
@@ -420,6 +421,7 @@ async function runDigest(
         mode: slot.mode,
         newsEngines: slot.newsEngines,
         scholarEngines: slot.scholarEngines,
+        ...(slot.topics !== undefined ? { topics: slot.topics } : {}),
       };
     }
   }

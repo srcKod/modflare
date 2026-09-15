@@ -118,6 +118,15 @@ export interface SlotConfig {
   /** Engines to gather from for this slot (already split news/scholar). */
   newsEngines: string[];
   scholarEngines: string[];
+  /**
+   * Topics this slot gathers on. Omitted → inherit the resolved preset topics
+   * (correct for `headlines`, which is keyword-targeted). An explicit [] forces
+   * a topic-agnostic, match-all gather — required for `trending`, because HN's
+   * Algolia does full-text TITLE matching and generic topic phrases ("artificial
+   * intelligence") never appear verbatim in HN titles, so any topic filter makes
+   * the query return nothing and the slot silently skips.
+   */
+  topics?: string[];
 }
 
 /**
@@ -150,7 +159,9 @@ function slotForTag(tag: SlotTag): SlotConfig {
     case 'papers':
       return { tag, mode: 'papers', newsEngines: [], scholarEngines: ['arxiv', 'hf', 's2'] };
     case 'trending':
-      return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [] };
+      // Topic-agnostic: trending surfaces what's hot, not what matches keywords.
+      // See SlotConfig.topics — an empty Algolia `query=` matches all stories.
+      return { tag, mode: 'news', newsEngines: ['hn'], scholarEngines: [], topics: [] };
     case 'headlines':
     default:
       return {
