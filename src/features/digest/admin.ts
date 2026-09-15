@@ -249,14 +249,19 @@ async function handleDigestSeed(env: Env): Promise<Response> {
     'الأمن السيبراني كوجهة استثمارية كبرى للذكاء الاصطناعي — تصريحات تشير إلى أن الأمن السيبراني سيمثل السوق القادم والأكبر لتقنيات الذكاء الاصطناعي.',
     'نمو مستدام لشركات الأمن السيبراني السحابي — تحليل يشير إلى تموضع الشركات التي تدمج بين الأمن السيبراني للسحابة والذكاء الاصطناعي لتحقيق نمو مستدام.',
   ];
+  // Each content line opens with an RTL mark (U+200F) — exactly like a real
+  // pipeline digest — so Telegram renders every line right-to-left regardless
+  // of whether the item starts with Latin or Arabic text. The source label is
+  // italic (<i> inside <a>), matching the published style.
+  const RTL = '‏';
   const body = [
-    '📰 <b>أبرز مستجدات التكنولوجيا والذكاء الاصطناعي</b>',
+    `${RTL}📰 <b>أبرز مستجدات التكنولوجيا والذكاء الاصطناعي</b>`,
     '',
     ...items.flatMap((text, i) => [
-      `• <b>${text}</b> <a href="${src[i].url}">${src[i].source}</a>`,
+      `${RTL}• <b>${text}</b> <a href="${src[i].url}"><i>${src[i].source}</i></a>`,
       '',
     ]),
-    `— · ${items.length} مصادر`,
+    `${RTL}— · ${items.length} مصادر`,
   ].join('\n');
 
   const insert = await env.DB
