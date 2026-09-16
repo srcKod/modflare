@@ -253,7 +253,7 @@ export interface Env {
   DIGEST_MODEL?: string;
   /** Digest LLM timeout ms. Default 120000. */
   DIGEST_TIMEOUT_MS?: string;
-  /** Provider params merged into the digest request body (e.g. thinking-off). Unset = LLM_EXTRA_BODY_JSON. */
+  /** Provider params merged into the digest request body (e.g. thinking-off). Unset = clean payload (deliberately NOT inherited from LLM_EXTRA_BODY_JSON — provider payloads are not portable across providers). */
   DIGEST_EXTRA_BODY_JSON?: string;
   /** 'json' = send response_format json_object for the digest. Default json. */
   DIGEST_RESPONSE_FORMAT?: string;
@@ -286,6 +286,8 @@ export interface TelegramMessage {
   message_id: number;
   chat: { id: number; type: string; title?: string; username?: string };
   from?: { id: number; first_name?: string; last_name?: string; username?: string };
+  /** Present on forwards (incl. the discussion-group copy of a channel post). */
+  forward_from_chat?: { id: number };
   text?: string;
   caption?: string;
   photo?: PhotoSize[];

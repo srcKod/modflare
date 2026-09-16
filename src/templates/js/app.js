@@ -544,7 +544,7 @@ async function loadDigest(){
     const sr=await dgGet('/api/digest/stats?'+sp);
     const spub=document.getElementById('dg-published');
     const sstat=document.getElementById('dg-stats');
-    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="error"><td colspan="9">Failed to load.</td></tr>';return;}
+    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="row-error"><td colspan="9">Failed to load.</td></tr>';return;}
     const st=await sr.json();
     const sm=st.summary||{};
     sstat.innerHTML=

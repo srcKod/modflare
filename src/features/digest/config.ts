@@ -404,7 +404,12 @@ export function resolveDigestConfig(
       model: env.DIGEST_MODEL || env.TEXT_MODEL || env.MODEL_NAME,
       maxTokens: DIGEST_DEFAULT_MAX_TOKENS,
       timeoutMs: Number(env.DIGEST_TIMEOUT_MS) || 120_000,
-      extraBody: env.DIGEST_EXTRA_BODY_JSON || env.LLM_EXTRA_BODY_JSON,
+      // Per-provider extra body. Deliberately NOT inherited from
+      // LLM_EXTRA_BODY_JSON: provider payloads are not portable (the Workers
+      // AI thinking-off `chat_template_kwargs` is a 400 on e.g.
+      // google-ai-studio). Set DIGEST_EXTRA_BODY_JSON only when the digest's
+      // own provider needs request-body tweaks; unset sends a clean payload.
+      extraBody: env.DIGEST_EXTRA_BODY_JSON || '',
       jsonMode: (env.DIGEST_RESPONSE_FORMAT ?? 'json') === 'json',
     },
     tavilyKey: env.TAVILY_API_KEY,

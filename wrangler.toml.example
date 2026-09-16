@@ -161,7 +161,10 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 # DIGEST_MODEL = "workers-ai/@cf/google/gemma-4-26b-a4b-it"
 # DIGEST_BASE_URL / DIGEST_API_KEY -> run the digest on its own LLM provider
 #   (falls back to OPENAI_BASE_URL / OPENAI_API_KEY). DIGEST_MODEL /
-#   DIGEST_EXTRA_BODY_JSON / DIGEST_RESPONSE_FORMAT / DIGEST_TIMEOUT_MS likewise.
+#   DIGEST_RESPONSE_FORMAT / DIGEST_TIMEOUT_MS likewise. DIGEST_EXTRA_BODY_JSON
+#   does NOT fall back to the moderation one: provider payloads are not
+#   portable (Workers AI `chat_template_kwargs` is a 400 on google-ai-studio).
+#   Leave it unset unless the digest provider needs its own body tweaks.
 # NEWS_ENGINE = "gnews"             # news: gnews | hn | rss | tavily | exa | jsearch; scholar: arxiv | hf | s2 (default: preset chain)
 # Secrets (set via `wrangler secret put`, never committed):
 #   JINA_API_KEY        — Reader extraction fallback (500 RPM keyed, JSON mode)

@@ -110,6 +110,15 @@ async function handleModerationUpdate(
   // Service messages (new members, pinned, etc.) are not user content.
   if (msg.new_chat_members || msg.left_chat_member) return true;
 
+  // Own-post exemption: the discussion-group copy of our channel digest post
+  // arrives as a GroupAnonymousBot forward (forward_from_chat = our channel).
+  // It is our own content, never stranger spam — skip it before the LLM call.
+  const targetChat = (env.NEWS_TARGET_CHAT_ID || '').trim();
+  if (targetChat && Number(targetChat) === msg.forward_from_chat?.id) {
+    await logger.debug('self_post_exempt', { ...ctx });
+    return true;
+  }
+
   try {
     // Admins are exempt: responsible members selected by the owner. We take
     // no action on admins (delete or LLM) during active hours. If

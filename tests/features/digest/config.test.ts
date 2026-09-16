@@ -7,6 +7,7 @@ import {
   DOMAIN_PRESETS,
   ROTATION_PRESETS,
 } from '../../../src/features/digest/config';
+import { resolveDigestConfig } from '../../../src/features/digest/config';
 import { resolveSlotDomain } from '../../../src/features/digest/pipeline';
 
 /** Minimal D1 stub covering the single COUNT query resolveSlotDomain makes. */
@@ -205,5 +206,34 @@ describe('parseSchedule (NEWS_SCHEDULE)', () => {
     const s = parseSchedule('  9:headlines , 14:papers  ');
     expect(s[9].tag).toBe('headlines');
     expect(s[14].tag).toBe('papers');
+  });
+});
+
+describe('digest LLM extra body is provider-scoped', () => {
+  // Regression: the digest inherited the moderation thinking-off payload
+  // (Workers AI `chat_template_kwargs`) via LLM_EXTRA_BODY_JSON fallback and
+  // google-ai-studio rejected it with a 400. Provider payloads are not
+  // portable - unset DIGEST_EXTRA_BODY_JSON must send a clean payload.
+  const envBase = {
+    OPENAI_BASE_URL: 'https://gateway.example/compat',
+    OPENAI_API_KEY: 'k',
+    DIGEST_BASE_URL: 'https://gateway.example/compat',
+    DIGEST_API_KEY: 'k2',
+    DIGEST_MODEL: 'google-ai-studio/gemini-3.5-flash-lite',
+  };
+  it('does not inherit the moderation thinking-off payload', () => {
+    const cfg = resolveDigestConfig({
+      ...envBase,
+      LLM_EXTRA_BODY_JSON: '{"chat_template_kwargs":{"enable_thinking":false}}',
+    } as never);
+    expect(cfg.llm.extraBody).toBe('');
+  });
+  it('uses DIGEST_EXTRA_BODY_JSON verbatim when set', () => {
+    const cfg = resolveDigestConfig({
+      ...envBase,
+      LLM_EXTRA_BODY_JSON: '{"chat_template_kwargs":{"enable_thinking":false}}',
+      DIGEST_EXTRA_BODY_JSON: '{"thinkingConfig":{"thinkingBudget":0}}',
+    } as never);
+    expect(cfg.llm.extraBody).toBe('{"thinkingConfig":{"thinkingBudget":0}}');
   });
 });
