@@ -189,7 +189,7 @@ async function loadRows(){
   const p=qs(); p.set('page',page); p.set('per_page',perPage);
   const r=await fetch(base+'/api/logs?'+p);
   const tbody=document.getElementById('rows');
-  if(!r.ok){tbody.innerHTML='<tr class="error"><td colspan="9">Failed to load ('+r.status+')</td></tr>';return;}
+  if(!r.ok){tbody.innerHTML='<tr class="row-error"><td colspan="9">Failed to load ('+r.status+')</td></tr>';return;}
   const d=await r.json();
   if(!d.rows.length){tbody.innerHTML='<tr class="empty"><td colspan="9">No rows match the filters.</td></tr>';}
   else{
@@ -285,7 +285,7 @@ async function loadQueue(){
   const kind=document.getElementById('bq-kind').value;
   const p=new URLSearchParams();if(kind)p.set('kind',kind);
   const r=await fetch(base+'/api/bot-queue?'+p);
-  if(!r.ok){tbody.innerHTML='<tr class="error"><td colspan="7">Failed to load ('+r.status+')</td></tr>';return;}
+  if(!r.ok){tbody.innerHTML='<tr class="row-error"><td colspan="7">Failed to load ('+r.status+')</td></tr>';return;}
   const d=await r.json();
   if(d.enabled){notice.hidden=true;}
   else{

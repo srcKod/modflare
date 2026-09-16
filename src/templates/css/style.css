@@ -54,7 +54,10 @@ a.logout{color:#2563eb;text-decoration:none;font-size:.9rem}
 .gh-link{color:var(--muted);display:inline-flex;align-items:center;text-decoration:none;line-height:0;padding:4px}
 .gh-link:hover{color:#111827}
 .empty{color:var(--muted);text-align:center;padding:40px 0}
-.error{color:#dc2626;text-align:center;padding:20px}
+/* Whole-row load failure. Named row-error (NOT .error) on purpose: the level
+   column renders <span class="badge error">, and a bare .error rule would
+   override the pill padding (20px vs 2px 8px) and balloon it into a blob. */
+.row-error{color:#dc2626;text-align:center;padding:20px}
 
 /* Responsive table wrapper: horizontal scroll on narrow screens so columns
    don't squish unreadably. */
