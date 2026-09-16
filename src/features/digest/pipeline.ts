@@ -8,6 +8,7 @@
 import { envBool, envList } from '../../core/config';
 import { makeLogger } from '../../core/logger';
 import type { AuditLogger } from '../../core/logger';
+import { loadSettingOverrides, resolveSetting, settingBool } from '../../core/settings';
 import { chatCompletion } from '../../core/llm';
 import { fetchWithTimeout } from '../../core/fetch';
 import {
@@ -839,9 +840,18 @@ function resolveDigestType(
  * first hourly invocation) so a misconfigured deployment is never silent.
  */
 export async function runDigestGate(env: Env): Promise<void> {
-  if ((env.ENABLE_NEWS_DIGEST || '').trim().toLowerCase() !== 'true') return;
+  // Master switch: runtime D1 settings → ENABLE_NEWS_DIGEST env → default off.
+  // Fail-open: a D1 hiccup in loadSettingOverrides returns {} and the env var
+  // still applies, so the gate can't be wedged by the settings layer.
+  const overrides = await loadSettingOverrides(env.DB);
+  const enabled =
+    settingBool(
+      resolveSetting(env, overrides, 'digest_enabled'),
+      env.ENABLE_NEWS_DIGEST === 'true' || env.ENABLE_NEWS_DIGEST === '1',
+    );
+  if (!enabled) return;
   const logger = makeLoggerFor(env);
-  const cfg = resolveDigestConfig(env);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   const lp = localParts(env.TIMEZONE);
 
   if (!hasSchedule(env)) {
@@ -880,7 +890,8 @@ export async function runDigestFromHour(
   tag: SlotTag,
 ): Promise<{ slotKey: string }> {
   const logger = makeLoggerFor(env);
-  const cfg = resolveDigestConfig(env);
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   const lp = { ...localParts(env.TIMEZONE), hour };
   // Force the chosen tag onto the resolved type (a tag that isn't in
   // NEWS_SCHEDULE still runs — the dev override is the point).
@@ -963,7 +974,11 @@ export async function captureReactionUpdate(
 
 export async function pruneDigests(env: Env): Promise<void> {
   if (!env.DB) return;
-  const cfg = resolveDigestConfig(env);
+  // Prune honors runtime overrides (draft TTL is env-only today, but keeping
+  // the resolution shape consistent with the gate means a future
+  // settings-backed TTL just works).
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   const draftCutoff = new Date(
     Date.now() - cfg.draftTtlDays * 24 * 3600 * 1000,
   ).toISOString();

@@ -6,6 +6,7 @@
  */
 
 import { json } from '../../core/admin';
+import { loadSettingOverrides } from '../../core/settings';
 import type { AdminRoute } from '../../core/router';
 import type { Env } from '../../core/types';
 import { makeLogger } from '../../core/logger';
@@ -234,7 +235,8 @@ async function handleDigestSeed(
     return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true to enable)' }, 404);
   }
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
-  const cfg = resolveDigestConfig(env);
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   if (!cfg.targetChatId) {
     return json({ error: 'NEWS_TARGET_CHAT_ID required to seed a draft' }, 400);
   }
@@ -317,7 +319,8 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
       }>();
     const rows = scan.results ?? [];
 
-    const cfg = resolveDigestConfig(env);
+    const overrides = await loadSettingOverrides(env.DB);
+    const cfg = resolveDigestConfig(env, undefined, overrides);
     const signals = parseReactionSignals(env.NEWS_REACTION_SIGNALS);
     const analytics = await loadPostAnalytics(env.DB, rows, signals);
 
@@ -399,7 +402,8 @@ function minReactionsValue(q: URLSearchParams): number {
 }
 
 async function handleDigestSettings(env: Env): Promise<Response> {
-  const cfg = resolveDigestConfig(env);
+  const overrides = env.DB ? await loadSettingOverrides(env.DB) : {};
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   const signals = parseReactionSignals(env.NEWS_REACTION_SIGNALS);
   const rotating = isRotationDomain(cfg.domain);
   return json({

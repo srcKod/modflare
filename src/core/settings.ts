@@ -32,7 +32,7 @@ export interface SettingDef {
   /** Extra validation beyond kind parsing; returns an error message or null. */
   validate?: (raw: string) => string | null;
   /** UI grouping (panel renders one section per group). */
-  group: 'moderation' | 'general';
+  group: 'moderation' | 'digest' | 'general';
 }
 
 /** The allowlist. Extend per feature; never accept unlisted keys from the API. */
@@ -66,6 +66,54 @@ export const SETTING_DEFS: SettingDef[] = [
     envVar: 'ENABLE_SELF_CLEAN',
     default: 'false',
     group: 'moderation',
+  },
+  {
+    key: 'digest_enabled',
+    label: 'News digest master switch',
+    description:
+      'When off, digest cron gates no-op (each tick logs a skip). Shadows ENABLE_NEWS_DIGEST.',
+    kind: 'boolean',
+    envVar: 'ENABLE_NEWS_DIGEST',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_autopublish',
+    label: 'Digest auto-publish',
+    description:
+      'When off, digest runs are stored as pending drafts for review instead of publishing. Shadows NEWS_AUTO_PUBLISH.',
+    kind: 'boolean',
+    envVar: 'NEWS_AUTO_PUBLISH',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_fetch_fulltext',
+    label: 'Digest full-text extraction',
+    description:
+      'When on, top digest items fetch + extract page text for richer summaries. Shadows NEWS_FETCH_FULLTEXT.',
+    kind: 'boolean',
+    envVar: 'NEWS_FETCH_FULLTEXT',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_weekly',
+    label: 'Digest weekly rollup',
+    description: 'Enables the weekly digest roundup. Shadows NEWS_ENABLE_WEEKLY.',
+    kind: 'boolean',
+    envVar: 'NEWS_ENABLE_WEEKLY',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_monthly',
+    label: 'Digest monthly rollup',
+    description: 'Enables the monthly digest deep-dive. Shadows NEWS_ENABLE_MONTHLY.',
+    kind: 'boolean',
+    envVar: 'NEWS_ENABLE_MONTHLY',
+    default: 'false',
+    group: 'digest',
   },
 ];
 

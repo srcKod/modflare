@@ -306,7 +306,15 @@ export function resolveDigestConfig(
   env: Env,
   /** Rotation pick — overrides NEWS_DOMAIN when it holds a strategy value. */
   effectiveDomain?: string,
+  /** D1 settings overrides (runtime) — shadow the env vars per SETTING_DEFS.
+   *  Omitted (undefined) = pure env/deploy-time resolution, as before. */
+  overrides?: Record<string, string>,
 ): DigestConfig {
+  // Runtime settings layer: a D1 override beats the env var it shadows.
+  // `ov` returns the effective raw value for a key (override → env → unset).
+  const ov = (key: string, envVar: string): string | undefined =>
+    overrides?.[key] ?? (env as unknown as Record<string, string | undefined>)[envVar];
+
   const configured = (env.NEWS_DOMAIN || 'tech').trim();
   const lower = configured.toLowerCase();
   // Rotation values share the preset slot: strategy lives in the value, the
@@ -348,16 +356,16 @@ export function resolveDigestConfig(
       : preset.includeDomains,
     minPoints: Number(env.NEWS_MIN_POINTS) || 25,
     maxItems: Math.min(8, Math.max(1, Number(env.NEWS_MAX_ITEMS) || 5)),
-    fetchFulltext: (env.NEWS_FETCH_FULLTEXT || '').trim() === 'true',
+    fetchFulltext: (ov('digest_fetch_fulltext', 'NEWS_FETCH_FULLTEXT') || '').trim() === 'true',
     extractMax: Math.max(1, Math.min(12, Number(env.NEWS_EXTRACT_MAX_PER_RUN) || 4)),
     targetChatId: (env.NEWS_TARGET_CHAT_ID || '').trim(),
-    weeklyEnabled: (env.NEWS_ENABLE_WEEKLY || '') === 'true',
+    weeklyEnabled: (ov('digest_weekly', 'NEWS_ENABLE_WEEKLY') || '') === 'true',
     weeklyDay: Number(env.NEWS_WEEKLY_DAY ?? 0) || 0,
-    monthlyEnabled: (env.NEWS_ENABLE_MONTHLY || '') === 'true',
+    monthlyEnabled: (ov('digest_monthly', 'NEWS_ENABLE_MONTHLY') || '') === 'true',
     monthlyDay: Number(env.NEWS_MONTHLY_DAY ?? 1) || 1,
     language: env.NEWS_LANGUAGE?.trim() || 'English',
     dialect: env.NEWS_DIALECT?.trim() || undefined,
-    autoPublish: (env.NEWS_AUTO_PUBLISH || '').trim().toLowerCase() === 'true',
+    autoPublish: (ov('digest_autopublish', 'NEWS_AUTO_PUBLISH') || '').trim().toLowerCase() === 'true',
     draftTtlDays: Number(env.NEWS_DRAFT_TTL_DAYS) || 7,
     sponsorText: env.NEWS_SPONSOR_TEXT?.trim() || undefined,
     postAnalytics: (env.ENABLE_POST_ANALYTICS || '').trim() === 'true',
