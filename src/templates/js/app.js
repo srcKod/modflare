@@ -382,7 +382,7 @@ async function loadSettings(){
         const key=inp.getAttribute('data-key');
         const value=inp.type==='checkbox'?String(inp.checked):inp.value;
         try{
-          const r=await apiPost('/api/settings',{key,value});
+          const r=await dgPost('/api/settings',{key,value});
           const d=await r.json().catch(()=>({}));
           if(r.ok){loadSettings();}
           else{alert('Save failed: '+(d.error||('HTTP '+r.status)));}
@@ -393,7 +393,7 @@ async function loadSettings(){
       btn.addEventListener('click',async()=>{
         const key=btn.getAttribute('data-key');
         try{
-          const r=await apiPost('/api/settings/reset',{key});
+          const r=await dgPost('/api/settings/reset',{key});
           const d=await r.json().catch(()=>({}));
           if(r.ok){loadSettings();}
           else{alert('Reset failed: '+(d.error||('HTTP '+r.status)));}
