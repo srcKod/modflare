@@ -20,6 +20,7 @@ import {
   isSeedEnabled,
   parseDraftsPath,
   rollupHourFromSchedule,
+  effectiveSchedule,
 } from './config';
 import type { SlotTag } from './config';
 import { runDigestFromHour, localParts } from './pipeline';
@@ -231,18 +232,22 @@ async function handleDigestSeed(
   hour: number,
   tag: string,
 ): Promise<Response> {
-  if (!isSeedEnabled(env.NEWS_DEV_SEED)) {
-    return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true to enable)' }, 404);
-  }
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
   const overrides = await loadSettingOverrides(env.DB);
+  // Dev-seed gate honors the runtime override → env → default.
+  const seedOn = isSeedEnabled(
+    overrides['digest_dev_seed'] ?? env.NEWS_DEV_SEED,
+  );
+  if (!seedOn) {
+    return json({ error: 'Seed disabled (set NEWS_DEV_SEED=true or the digest_dev_seed setting)' }, 404);
+  }
   const cfg = resolveDigestConfig(env, undefined, overrides);
   if (!cfg.targetChatId) {
     return json({ error: 'NEWS_TARGET_CHAT_ID required to seed a draft' }, 400);
   }
   // The tag is what the cron would run at that hour; unknown/empty falls
   // back to the resolved schedule entry (or a plain daily if none).
-  const schedule = parseSchedule(env.NEWS_SCHEDULE);
+  const schedule = parseSchedule(effectiveSchedule(env, overrides));
   const validTag =
     tag === 'headlines' || tag === 'trending' || tag === 'papers' || tag === 'deep'
       ? tag
@@ -424,7 +429,7 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     maxItems: cfg.maxItems,
     fetchFulltext: cfg.fetchFulltext,
     targetChatId: cfg.targetChatId,
-    rollupHour: rollupHourFromSchedule(parseSchedule(env.NEWS_SCHEDULE)),
+    rollupHour: rollupHourFromSchedule(parseSchedule(effectiveSchedule(env, overrides))),
     localHour: localParts(env.TIMEZONE).hour,
     weeklyEnabled: cfg.weeklyEnabled,
     monthlyEnabled: cfg.monthlyEnabled,
@@ -438,11 +443,11 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     // Intraday schedule as configured (server authoritative). Empty object
     // when NEWS_SCHEDULE is unset — rollupHour is null in that case too (the
     // digest does not run at all without a schedule).
-    schedule: parseSchedule(env.NEWS_SCHEDULE),
+    schedule: parseSchedule(effectiveSchedule(env, overrides)),
     // Lets the panel hide the "Insert test draft" button unless the dev seed
     // toggle is on — the endpoint is 04'd server-side otherwise, so there's no
     // point offering a button that can only fail.
-    dev_seed: isSeedEnabled(env.NEWS_DEV_SEED),
+    dev_seed: isSeedEnabled(overrides['digest_dev_seed'] ?? env.NEWS_DEV_SEED),
   });
 }
 

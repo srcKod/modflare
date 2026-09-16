@@ -365,7 +365,9 @@ async function loadSettings(){
       const v=byKey[def.key]||{value:'',source:'default'};
       const input=def.kind==='boolean'
         ?'<input type="checkbox" data-key="'+esc(def.key)+'"'+(v.value==='true'?' checked':'')+'>'
-        :'<input type="text" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:240px">';
+        :def.kind==='number'
+          ?'<input type="number" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:90px" title="'+esc(def.description||'')+'">'
+          :'<input type="text" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:340px" title="'+esc(def.description||'')+'">';
       const src='<span class="badge'+(v.source==='override'?' due':'')+'">'+esc(v.source)+'</span>';
       const reset='<button class="st-reset" data-key="'+esc(def.key)+'"'+(v.source==='override'?'':' disabled')+' title="Delete the override; the env/default value applies again">Reset</button>';
       return '<tr>'+

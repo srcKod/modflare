@@ -37,6 +37,7 @@ import {
   hasSchedule,
   rollupHourFromSchedule,
   slotForTag,
+  effectiveSchedule,
 } from './config';
 import type { DigestContentType, SlotConfig, SlotTag } from './config';
 import type { DigestConfig } from './config';
@@ -806,8 +807,9 @@ function resolveDigestType(
   env: Env,
   cfg: DigestConfig,
   lp: { date: string; hour: number; weekday: number; day: number },
+  overrides: Record<string, string> = {},
 ): { type: DigestContentType; slot?: SlotConfig } {
-  const schedule = parseSchedule(env.NEWS_SCHEDULE);
+  const schedule = parseSchedule(effectiveSchedule(env, overrides));
   // Weekly/monthly rollups fire at the earliest scheduled hour (morning
   // roundup) — replaces the removed NEWS_PUBLISH_HOURS.
   const rollupHour = rollupHourFromSchedule(schedule);
@@ -854,7 +856,7 @@ export async function runDigestGate(env: Env): Promise<void> {
   const cfg = resolveDigestConfig(env, undefined, overrides);
   const lp = localParts(env.TIMEZONE);
 
-  if (!hasSchedule(env)) {
+  if (!hasSchedule({ NEWS_SCHEDULE: effectiveSchedule(env, overrides) })) {
     if (lp.hour === 0) {
       await logger.warn('news_config_warning', {
         chat_id: Number(cfg.targetChatId) || null,
@@ -864,7 +866,7 @@ export async function runDigestGate(env: Env): Promise<void> {
     return;
   }
 
-  const { type, slot } = resolveDigestType(env, cfg, lp);
+  const { type, slot } = resolveDigestType(env, cfg, lp, overrides);
 
   try {
     await runDigest(env, cfg, type, logger, slot);
@@ -896,7 +898,7 @@ export async function runDigestFromHour(
   // Force the chosen tag onto the resolved type (a tag that isn't in
   // NEWS_SCHEDULE still runs — the dev override is the point).
   const slot = slotForTag(tag);
-  const { type } = resolveDigestType(env, cfg, lp);
+  const { type } = resolveDigestType(env, cfg, lp, overrides);
   await runDigest(env, cfg, type, logger, slot);
   return { slotKey: computeSlotKey(type, lp, tag) };
 }

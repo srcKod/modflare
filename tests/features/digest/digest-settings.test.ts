@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveDigestConfig } from '../../../src/features/digest/config';
+import { resolveDigestConfig, effectiveSchedule } from '../../../src/features/digest/config';
 import { SETTING_DEFS } from '../../../src/core/settings';
 import type { Env } from '../../../src/core/types';
 
@@ -61,5 +61,102 @@ describe('digest settings integration (foundation wiring)', () => {
     );
     // Behavior matches the no-override default (digest off by default).
     expect(cfg.autoPublish).toBe(false);
+  });
+
+  it('digest strong knobs shadow env vars (domain, topics, language, dialect)', () => {
+    const cfg = resolveDigestConfig(
+      mkEnv({
+        NEWS_DOMAIN: 'tech',
+        NEWS_TOPICS: 'weather, sports',
+        NEWS_LANGUAGE: 'English',
+        NEWS_DIALECT: undefined,
+        NEWS_MAX_ITEMS: '5',
+        NEWS_MIN_POINTS: '25',
+      }),
+      undefined,
+      {
+        digest_domain: 'finance',
+        digest_topics: 'AI agents, robotics',
+        digest_language: 'Arabic',
+        digest_dialect: 'Levantine',
+        digest_max_items: '8',
+        digest_min_points: '40',
+      },
+    );
+    expect(cfg.domain).toBe('finance');
+    // envList splits on commas AND whitespace, so 'AI agents, robotics' → 3 topics.
+    expect(cfg.topics).toEqual(['AI', 'agents', 'robotics']);
+    expect(cfg.language).toBe('Arabic');
+    expect(cfg.dialect).toBe('Levantine');
+    expect(cfg.maxItems).toBe(8);
+    expect(cfg.minPoints).toBe(40);
+  });
+
+  it('a D1 topics override wins even when the env var has topics', () => {
+    const cfg = resolveDigestConfig(
+      mkEnv({ NEWS_TOPICS: 'env-topic' }),
+      undefined,
+      { digest_topics: 'override-topic' },
+    );
+    expect(cfg.topics).toEqual(['override-topic']);
+  });
+
+  it('empty-string overrides fall back to the env var', () => {
+    // A blank text input in the panel must not silently wipe the env value.
+    const cfg = resolveDigestConfig(
+      mkEnv({ NEWS_LANGUAGE: 'English' }),
+      undefined,
+      { digest_language: '' },
+    );
+    expect(cfg.language).toBe('English');
+  });
+
+  it('empty topics override means "use the preset topics" (not empty)', () => {
+    const cfg = resolveDigestConfig(
+      mkEnv({}),
+      undefined,
+      { digest_topics: '' },
+    );
+    // No env topics, empty override → the tech preset's topics.
+    expect(cfg.topics.length).toBeGreaterThan(0);
+    expect(cfg.topics).not.toEqual([]);
+  });
+
+  it('sponsor text override works and empty falls back to env', () => {
+    const withOverride = resolveDigestConfig(mkEnv({}), undefined, {
+      digest_sponsor: 'Brought to you by Example',
+    });
+    expect(withOverride.sponsorText).toBe('Brought to you by Example');
+
+    const fallback = resolveDigestConfig(
+      mkEnv({ NEWS_SPONSOR_TEXT: 'env-sponsor' }),
+      undefined,
+      { digest_sponsor: '' },
+    );
+    expect(fallback.sponsorText).toBe('env-sponsor');
+  });
+});
+
+describe('effectiveSchedule (schedule override → env fallback)', () => {
+  it('an override beats the env var', () => {
+    const v = effectiveSchedule(
+      mkEnv({ NEWS_SCHEDULE: '9:headlines' }),
+      { digest_schedule: '5:papers,7:trending' },
+    );
+    expect(v).toBe('5:papers,7:trending');
+  });
+
+  it('no override → the env var is used', () => {
+    expect(
+      effectiveSchedule(mkEnv({ NEWS_SCHEDULE: '9:headlines' }), {}),
+    ).toBe('9:headlines');
+  });
+
+  it('a blank override falls back to the env var (you can\'t clear via blank)', () => {
+    expect(
+      effectiveSchedule(mkEnv({ NEWS_SCHEDULE: '9:headlines' }), {
+        digest_schedule: '   ',
+      }),
+    ).toBe('9:headlines');
   });
 });

@@ -204,6 +204,21 @@ export function hasSchedule(env: Pick<Env, 'NEWS_SCHEDULE'>): boolean {
   return Object.keys(parseSchedule(env.NEWS_SCHEDULE)).length > 0;
 }
 
+/**
+ * The effective NEWS_SCHEDULE value: a D1 settings override (when present)
+ * beats the deploy-time env var. Centralizes the override→env fallback so the
+ * gate, the dev-seed endpoint, and the admin settings view all agree on which
+ * schedule is in force. An empty override string falls back to the env var
+ * (you can't "clear" the schedule via a blank setting — deleting the row does).
+ */
+export function effectiveSchedule(
+  env: Pick<Env, 'NEWS_SCHEDULE'>,
+  overrides: Record<string, string>,
+): string | undefined {
+  const ov = overrides['digest_schedule'];
+  return ov !== undefined && ov.trim() !== '' ? ov : env.NEWS_SCHEDULE;
+}
+
 /* ------------------------------------------------------------------ */
 /* Reaction sentiment mapping (plan §23.2)                             */
 /* ------------------------------------------------------------------ */
@@ -311,11 +326,22 @@ export function resolveDigestConfig(
   overrides?: Record<string, string>,
 ): DigestConfig {
   // Runtime settings layer: a D1 override beats the env var it shadows.
-  // `ov` returns the effective raw value for a key (override → env → unset).
-  const ov = (key: string, envVar: string): string | undefined =>
-    overrides?.[key] ?? (env as unknown as Record<string, string | undefined>)[envVar];
+  // `ov` returns the effective raw value for a key. Fall through to the env
+  // var on any blank/whitespace override (not just a missing one), so a blank
+  // value in the panel can never silently wipe a configured env default.
+  const ov = (key: string, envVar: string): string | undefined => {
+    const o = overrides?.[key];
+    if (o !== undefined && o.trim() !== '') return o;
+    return (env as unknown as Record<string, string | undefined>)[envVar];
+  };
 
-  const configured = (env.NEWS_DOMAIN || 'tech').trim();
+  // `ov` returns the *trimmed, possibly-empty* effective value for a runtime
+  // setting (override → env → ''); an empty string means "no override AND env
+  // unset", so callers fall through to the coded/preset default.
+  const ovTrim = (key: string, envVar: string): string =>
+    (ov(key, envVar) ?? '').trim();
+
+  const configured = ovTrim('digest_domain', 'NEWS_DOMAIN') || 'tech';
   const lower = configured.toLowerCase();
   // Rotation values share the preset slot: strategy lives in the value, the
   // domain is decided per-run in the pipeline (needs D1 for the cursor).
@@ -332,8 +358,8 @@ export function resolveDigestConfig(
     ? modeRaw
     : 'news';
 
-  const topics = envList(env.NEWS_TOPICS).length
-    ? envList(env.NEWS_TOPICS)
+  const topics = envList(ov('digest_topics', 'NEWS_TOPICS')).length
+    ? envList(ov('digest_topics', 'NEWS_TOPICS'))
     : preset.topics;
   let engines = envList(env.NEWS_ENGINE).length
     ? envList(env.NEWS_ENGINE)
@@ -354,8 +380,8 @@ export function resolveDigestConfig(
     includeDomains: envList(env.NEWS_INCLUDE_DOMAINS).length
       ? envList(env.NEWS_INCLUDE_DOMAINS)
       : preset.includeDomains,
-    minPoints: Number(env.NEWS_MIN_POINTS) || 25,
-    maxItems: Math.min(8, Math.max(1, Number(env.NEWS_MAX_ITEMS) || 5)),
+    minPoints: Number(ov('digest_min_points', 'NEWS_MIN_POINTS')) || 25,
+    maxItems: Math.min(8, Math.max(1, Number(ov('digest_max_items', 'NEWS_MAX_ITEMS')) || 5)),
     fetchFulltext: (ov('digest_fetch_fulltext', 'NEWS_FETCH_FULLTEXT') || '').trim() === 'true',
     extractMax: Math.max(1, Math.min(12, Number(env.NEWS_EXTRACT_MAX_PER_RUN) || 4)),
     targetChatId: (env.NEWS_TARGET_CHAT_ID || '').trim(),
@@ -363,11 +389,11 @@ export function resolveDigestConfig(
     weeklyDay: Number(env.NEWS_WEEKLY_DAY ?? 0) || 0,
     monthlyEnabled: (ov('digest_monthly', 'NEWS_ENABLE_MONTHLY') || '') === 'true',
     monthlyDay: Number(env.NEWS_MONTHLY_DAY ?? 1) || 1,
-    language: env.NEWS_LANGUAGE?.trim() || 'English',
-    dialect: env.NEWS_DIALECT?.trim() || undefined,
+    language: ovTrim('digest_language', 'NEWS_LANGUAGE') || 'English',
+    dialect: ovTrim('digest_dialect', 'NEWS_DIALECT') || undefined,
     autoPublish: (ov('digest_autopublish', 'NEWS_AUTO_PUBLISH') || '').trim().toLowerCase() === 'true',
     draftTtlDays: Number(env.NEWS_DRAFT_TTL_DAYS) || 7,
-    sponsorText: env.NEWS_SPONSOR_TEXT?.trim() || undefined,
+    sponsorText: ovTrim('digest_sponsor', 'NEWS_SPONSOR_TEXT') || undefined,
     postAnalytics: (env.ENABLE_POST_ANALYTICS || '').trim() === 'true',
     llm: {
       baseUrl: (env.DIGEST_BASE_URL || env.OPENAI_BASE_URL || '').replace(
