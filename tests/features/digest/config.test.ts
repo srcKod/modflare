@@ -278,3 +278,26 @@ describe('digest LLM extra body is provider-scoped', () => {
     expect(cfg.llm.extraBody).toBe('{"thinkingConfig":{"thinkingBudget":0}}');
   });
 });
+
+describe('topic phrases survive comma-splitting', () => {
+  // Final review: envList shredded multi-word topics on whitespace ("AI
+  // agents" -> "AI" OR "agents"). Topics split on commas only.
+  it('keeps multi-word phrases from env and overrides', () => {
+    const fromEnv = resolveDigestConfig({
+      NEWS_DOMAIN: 'custom',
+      NEWS_TOPICS: 'AI agents, cloud computing',
+    } as never);
+    expect(fromEnv.topics).toEqual(['AI agents', 'cloud computing']);
+    const fromOverride = resolveDigestConfig(
+      { NEWS_DOMAIN: 'tech' } as never,
+      undefined,
+      { digest_topics: 'quantum computing, photonics' },
+    );
+    expect(fromOverride.topics).toEqual(['quantum computing', 'photonics']);
+  });
+
+  it('falls back to preset topics when unset', () => {
+    const cfg = resolveDigestConfig({ NEWS_DOMAIN: 'tech' } as never);
+    expect(cfg.topics).toContain('AI agents');
+  });
+});

@@ -131,7 +131,13 @@ async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<bool
   let ok = false;
   for (const locale of locales) {
     const url = `https://news.google.com/rss/search?q=${query}&${locale}`;
-    const res = await fetchWithTimeout(url);
+    let res = await fetchWithTimeout(url);
+    if (!res.ok) {
+      // Shared worker-egress IPs get throttled by Google; one polite retry
+      // (same class as the arXiv/S2 backoff) before giving up the locale.
+      await new Promise((r) => setTimeout(r, 4000));
+      res = await fetchWithTimeout(url);
+    }
     if (!res.ok) continue;
     ok = true;
     const xml = await res.text();

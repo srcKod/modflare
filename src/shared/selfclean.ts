@@ -90,7 +90,7 @@ export async function cleanExpiredBotMessages(env: Env): Promise<void> {
     )
       .bind(cutoff, CLEANUP_BATCH_SIZE)
       .all<BotMessageRow>();
-    rows = res.results;
+    rows = res.results ?? [];
   } catch (err) {
     console.error('bot-message cleanup query failed: ' + String(err));
     return;

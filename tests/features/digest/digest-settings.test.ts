@@ -85,8 +85,8 @@ describe('digest settings integration (foundation wiring)', () => {
       },
     );
     expect(cfg.domain).toBe('finance');
-    // envList splits on commas AND whitespace, so 'AI agents, robotics' → 3 topics.
-    expect(cfg.topics).toEqual(['AI', 'agents', 'robotics']);
+    // Topics split on commas only — multi-word phrases survive intact.
+    expect(cfg.topics).toEqual(['AI agents', 'robotics']);
     expect(cfg.language).toBe('Arabic');
     expect(cfg.dialect).toBe('Levantine');
     expect(cfg.maxItems).toBe(8);

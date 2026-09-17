@@ -61,7 +61,9 @@ function moderationProfile(env: Env, isImage: boolean): LlmProfile {
     baseUrl: env.OPENAI_BASE_URL.replace(/\/+$/, ''),
     apiKey: env.OPENAI_API_KEY,
     model: resolveModel(env, isImage),
-    maxTokens: Number(env.LLM_MAX_TOKENS) || 2048,
+    // Moderation-scoped output cap (plan: 400). A missing var falls back to
+    // the same 400 — never the multi-thousand digest-scale default.
+    maxTokens: Number(env.LLM_MAX_TOKENS) || 400,
     timeoutMs: Number(env.LLM_TIMEOUT_MS) || 60000,
     temperature: 0,
     jsonMode: env.LLM_RESPONSE_FORMAT === 'json',

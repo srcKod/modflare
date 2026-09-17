@@ -161,9 +161,10 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 #                prompt + 5000-token budget; schedule it AFTER headlines)
 # NEWS_SCHEDULE = "9:headlines,14:papers,20:trending,22:deep"
 # Digest LLM profile (DIGEST_MODEL -> TEXT_MODEL -> MODEL_NAME fallback).
-# Recommended for multilingual output (esp. Arabic): the multimodal gemma
-# model — set it explicitly so the digest does not inherit the text-only
-# glm model:
+# Current production pick: flash-lite class via the gateway (Arabic output
+# quality + latency at a fraction of the neuron cost). The multimodal gemma
+# model remains a valid explicit alternative for image-heavy needs:
+# DIGEST_MODEL = "google-ai-studio/gemini-3.5-flash-lite"
 # DIGEST_MODEL = "workers-ai/@cf/google/gemma-4-26b-a4b-it"
 # DIGEST_BASE_URL / DIGEST_API_KEY -> run the digest on its own LLM provider
 #   (falls back to OPENAI_BASE_URL / OPENAI_API_KEY). DIGEST_MODEL /

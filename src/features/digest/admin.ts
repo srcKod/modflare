@@ -5,7 +5,7 @@
  * a CSRF guard (custom header + Origin check).
  */
 
-import { json } from '../../core/admin';
+import { csrfOk, json } from '../../core/admin';
 import { loadSettingOverrides } from '../../core/settings';
 import type { AdminRoute } from '../../core/router';
 import type { Env } from '../../core/types';
@@ -28,25 +28,10 @@ import { runDigestFromHour, localParts, resolveDigestType, computeSlotKey, apply
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
 
-/* CSRF guard for the digest mutation endpoints                        */
-/* ------------------------------------------------------------------ */
-
-/**
- * Digest POSTs require: (1) the X-Requested-With: fetch header (a cross-site
- * HTML form cannot set custom headers) and (2) an Origin header whose host
- * matches the request host. SameSite=Strict on the auth cookie is the third
- * layer (FEATURE_PLAN.md §11.4 / §16).
- */
-function csrfOk(request: Request): boolean {
-  if ((request.headers.get('X-Requested-With') || '') !== 'fetch') return false;
-  const origin = request.headers.get('Origin');
-  if (!origin) return false;
-  try {
-    return new URL(origin).host === new URL(request.url).host;
-  } catch {
-    return false;
-  }
-}
+/* CSRF: state-changing digest endpoints use the shared core guard
+ * (Origin/Referer host match). A previous local copy additionally required
+ * X-Requested-With — dropped in favor of the single documented contract;
+ * the panel sends same-origin fetches either way. */
 
 /* ------------------------------------------------------------------ */
 /* Digest handlers                                                     */

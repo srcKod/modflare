@@ -321,3 +321,51 @@ describe('engineJsearch — Jina Search as engine', () => {
     expect(cands).toEqual([]);
   });
 });
+
+describe('engineGnews — one polite retry per locale', () => {
+  // Worker-egress IPs get throttled by Google; a single backend failure must
+  // not zero the primary zero-key engine (final review finding).
+  const GNEWS_BODY = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Google News</title>
+<item><title>Retry story</title><link>https://example.com/retry</link><pubDate>Tue, 16 Sep 2026 05:00:00 GMT</pubDate><source url="https://example.com">Example</source></item>
+</channel></rss>`;
+
+  it('retries a failed locale once and parses the recovery', async () => {
+    const calls: string[] = [];
+    let attempt = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        calls.push(String(url));
+        attempt += 1;
+        if (attempt === 1) return new Response('throttled', { status: 429 });
+        return new Response(GNEWS_BODY, { status: 200 });
+      }),
+    );
+    const cands = await gatherSources(
+      baseQuery({
+        mode: 'news',
+        newsEngines: ['gnews'],
+        scholarEngines: [],
+        gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
+      }),
+    );
+    expect(calls.length).toBe(2); // initial + one retry
+    expect(cands.length).toBe(1);
+    expect(cands[0].title).toBe('Retry story');
+  });
+
+  it('reports gnews as failed when both attempts fail', async () => {
+    mockFetchOnce({ status: 503, body: '' });
+    const rep = await gatherSourcesDetailed(
+      baseQuery({
+        mode: 'news',
+        newsEngines: ['gnews'],
+        scholarEngines: [],
+        gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
+      }),
+    );
+    expect(rep.candidates).toEqual([]);
+    expect(rep.failures).toEqual(['gnews']);
+  });
+});

@@ -3,7 +3,7 @@
  * Precedence: explicit env var > preset value > built-in default.
  */
 
-import { envList } from '../../core/config';
+import { envList, envCsv } from '../../core/config';
 import { resolveSetting, settingBool } from '../../core/settings';
 
 export type DigestMode = 'news' | 'papers' | 'both';
@@ -375,8 +375,11 @@ export function resolveDigestConfig(
     ? modeRaw
     : 'news';
 
-  const topics = envList(ov('digest_topics', 'NEWS_TOPICS')).length
-    ? envList(ov('digest_topics', 'NEWS_TOPICS'))
+  // Topics are PHRASES ("AI agents", "central banks") — comma-split only.
+  // envList would shred them on whitespace into single-word OR soup and
+  // every keyword engine would lose precision (final review finding).
+  const topics = envCsv(ov('digest_topics', 'NEWS_TOPICS')).length
+    ? envCsv(ov('digest_topics', 'NEWS_TOPICS'))
     : preset.topics;
   let engines = envList(env.NEWS_ENGINE).length
     ? envList(env.NEWS_ENGINE)

@@ -34,3 +34,17 @@ export function envInt(value: string | undefined, dflt: number): number {
   const n = Number(t);
   return Number.isFinite(n) ? n : dflt;
 }
+
+/**
+ * Split a comma-separated env var into trimmed, non-empty PHRASES.
+ * Unlike envList (which also splits on whitespace), inner spaces survive —
+ * for values where spaces are significant, like topic queries ("AI agents",
+ * "central banks"): whitespace-splitting shreds multi-word phrases into
+ * single-word OR soup and every keyword engine loses precision.
+ */
+export function envCsv(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
