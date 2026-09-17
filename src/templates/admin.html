@@ -97,6 +97,9 @@
       <select id="dg-f-type" title="Filter by digest type">
         <option value="">type: all</option><option>daily</option><option>weekly</option><option>monthly</option>
       </select>
+      <select id="dg-f-tag" title="Filter by intraday slot">
+        <option value="">slot: all</option><option>headlines</option><option>trending</option><option>papers</option><option>deep</option>
+      </select>
       <input id="dg-f-from" type="date" style="width:125px" title="Published from (UTC)">
       <input id="dg-f-to" type="date" style="width:125px" title="Published to (UTC, inclusive)">
       <input id="dg-f-minrx" type="number" min="0" placeholder="min reactions" style="width:110px" title="Minimum reactions">
@@ -155,9 +158,9 @@
     <div class="table-wrap">
     <table class="dg-table">
       <thead><tr>
-        <th>Title</th><th>Type</th><th>Domain</th><th>Published (UTC)</th><th class="col-rx-count">Reactions</th><th>Breakdown</th><th>Trend</th><th>Message</th><th>Edited</th>
+        <th>Title</th><th>Type</th><th>Slot</th><th>Domain</th><th>Published (UTC)</th><th class="col-rx-count">Reactions</th><th>Breakdown</th><th>Trend</th><th>Message</th><th>Edited</th>
       </tr></thead>
-      <tbody id="dg-published"><tr class="empty"><td colspan="9">Nothing published yet.</td></tr></tbody>
+      <tbody id="dg-published"><tr class="empty"><td colspan="10">Nothing published yet.</td></tr></tbody>
     </table>
     <div class="pagination">
       <button id="dg-prev">‹ Prev</button>

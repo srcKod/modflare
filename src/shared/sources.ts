@@ -110,7 +110,8 @@ function inAllowlist(url: string, allow: string[]): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* Engines                                                             */
+/* Engines (each returns whether its backend was reachable — the gather
+ * report turns backend failures into per-engine audit warnings)        */
 /* ------------------------------------------------------------------ */
 
 function firstTagBlock(xml: string, tag: string): string[] {
@@ -118,7 +119,7 @@ function firstTagBlock(xml: string, tag: string): string[] {
   return xml.match(re) ?? [];
 }
 
-async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
   // gnewsLocale may be a comma-separated list of locales (the `tech` preset
   // queries en-US AND zh-CN). Run one fetch per locale and merge — the later
   // dedupe pass (URL hash + fuzzy title) collapses any cross-locale overlap.
@@ -127,10 +128,12 @@ async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<void
     .map((s) => s.trim())
     .filter(Boolean);
   const query = encodeURIComponent(q.topics.join(' OR '));
+  let ok = false;
   for (const locale of locales) {
     const url = `https://news.google.com/rss/search?q=${query}&${locale}`;
     const res = await fetchWithTimeout(url);
     if (!res.ok) continue;
+    ok = true;
     const xml = await res.text();
     for (const item of firstTagBlock(xml, 'item').slice(0, 6)) {
       const title = tagText(item, 'title');
@@ -148,16 +151,17 @@ async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<void
       });
     }
   }
+  return ok;
 }
 
-async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
   const since = Math.floor(Date.now() / 1000) - 48 * 3600;
   const query = encodeURIComponent(q.topics.join(' OR '));
   const url =
     `https://hn.algolia.com/api/v1/search?query=${query}&tags=story` +
     `&hitsPerPage=8&numericFilters=created_at_i>${since},points>${q.minPoints}`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
     hits?: {
       title?: string;
@@ -182,10 +186,11 @@ async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
       snippet: h.story_text?.replace(/\s+/g, ' ').trim().slice(0, 1200) || undefined,
     });
   }
+  return true;
 }
 
-async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
-  if (!q.arxivCats.length) return;
+async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.arxivCats.length) return true;
   const qs = q.arxivCats.map((c) => `cat:${c}`).join('+OR+');
   const url =
     `https://export.arxiv.org/api/query?search_query=${qs}` +
@@ -196,7 +201,7 @@ async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<void
     await new Promise((r) => setTimeout(r, 15_000));
     res = await fetchWithTimeout(url, {}, 15_000);
   }
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const xml = await res.text();
   for (const entry of firstTagBlock(xml, 'entry').slice(0, 6)) {
     const title = tagText(entry, 'title').replace(/\s+/g, ' ');
@@ -225,15 +230,16 @@ async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<void
       snippet: (catPart + who + summary).replace(/\s+/g, ' ').slice(0, 1200),
     });
   }
+  return true;
 }
 
-async function engineHfPapers(out: DigestCandidate[]): Promise<void> {
+async function engineHfPapers(out: DigestCandidate[]): Promise<boolean> {
   const res = await fetchWithTimeout(
     'https://huggingface.co/api/daily_papers?limit=20',
     {},
     15_000,
   );
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as
     | { paper?: { title?: string; summary?: string; id?: string; upvotes?: number } }[]
     | null;
@@ -242,7 +248,10 @@ async function engineHfPapers(out: DigestCandidate[]): Promise<void> {
     .sort((a, b) => (b.paper?.upvotes ?? 0) - (a.paper?.upvotes ?? 0))
     .slice(0, 6);
   for (const p of items) {
-    const id = p.paper?.id ?? '';
+    const id = (p.paper?.id ?? '').trim();
+    // Empty id → junk /papers/ URL (no canonical link); skip rather than
+    // archiving an unresolvable item (review 1, P2-18).
+    if (!id) continue;
     out.push({
       tag: 'papers',
       title: p.paper!.title!,
@@ -252,10 +261,11 @@ async function engineHfPapers(out: DigestCandidate[]): Promise<void> {
       snippet: (p.paper?.summary ?? '').replace(/\s+/g, ' ').slice(0, 1200),
     });
   }
+  return true;
 }
 
-async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
-  if (!q.topics.length) return;
+async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.topics.length) return true;
   // Public Graph API — no key required. Docs:
   // https://api.semanticscholar.org/api-docs/graph#tag/Paper-Data/operation/get_graph_get_paper_search
   const fields =
@@ -274,7 +284,7 @@ async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Pr
     await new Promise((r) => setTimeout(r, 4000));
     res = await fetchWithTimeout(url, {}, 15_000);
   }
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
     data?: SemanticScholarPaper[];
   } | null;
@@ -307,6 +317,7 @@ async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Pr
       score: p.influentialCitationCount ?? p.citationCount,
     });
   }
+  return true;
 }
 
 /** One paper hit from the Semantic Scholar Graph search endpoint. */
@@ -323,8 +334,8 @@ interface SemanticScholarPaper {
   authors?: { authorId?: string; name?: string }[];
 }
 
-async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
-  if (!q.tavilyKey) return;
+async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.tavilyKey) return true;
   const res = await fetchWithTimeout(
     'https://api.tavily.com/search',
     {
@@ -343,7 +354,7 @@ async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<voi
     },
     15_000,
   );
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
     results?: { title?: string; url?: string; content?: string }[];
   } | null;
@@ -357,10 +368,11 @@ async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<voi
       snippet: (r.content ?? '').slice(0, 300),
     });
   }
+  return true;
 }
 
-async function engineExa(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
-  if (!q.exaKey) return;
+async function engineExa(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.exaKey) return true;
   const start = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
   const res = await fetchWithTimeout(
     'https://api.exa.ai/search',
@@ -380,7 +392,7 @@ async function engineExa(q: SourceQuery, out: DigestCandidate[]): Promise<void> 
     },
     15_000,
   );
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
     results?: {
       title?: string;
@@ -400,14 +412,17 @@ async function engineExa(q: SourceQuery, out: DigestCandidate[]): Promise<void> 
       snippet: (r.text ?? '').slice(0, 300),
     });
   }
+  return true;
 }
 
-async function engineRss(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
+async function engineRss(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
   const since = Date.now() - 48 * 3600 * 1000;
+  let ok = q.rssFeeds.length === 0; // unconfigured = skip, not failure
   for (const feed of q.rssFeeds.slice(0, 4)) {
     try {
       const res = await fetchWithTimeout(feed, {}, 10_000);
       if (!res.ok) continue;
+      ok = true;
       const xml = (await res.text()).slice(0, 2_000_000); // size guard (10 MB feeds)
       const blocks = [...firstTagBlock(xml, 'item'), ...firstTagBlock(xml, 'entry')];
       for (const item of blocks.slice(0, 5)) {
@@ -435,28 +450,48 @@ async function engineRss(q: SourceQuery, out: DigestCandidate[]): Promise<void> 
       // feed unreachable — degrade per plan §10
     }
   }
+  return ok;
+}
+
+/** Result of a gather run: ranked candidates + backends that failed when tried. */
+export interface GatherReport {
+  candidates: DigestCandidate[];
+  /** Engine names whose backend call failed (key-gated skips don't count). */
+  failures: string[];
 }
 
 /** Run all configured engines; returns deduped, allowlist-filtered candidates. */
 export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> {
+  return (await gatherSourcesDetailed(q)).candidates;
+}
+
+/**
+ * Same as gatherSources, plus per-engine reachability for audit warnings
+ * (review 1, P2-11: a dead engine used to degrade silently). Unknown engine
+ * names are ignored (config typo ≠ failed backend).
+ */
+export async function gatherSourcesDetailed(q: SourceQuery): Promise<GatherReport> {
   const out: DigestCandidate[] = [];
-  const jobs: Promise<void>[] = [];
+  const jobs: { name: string; run: Promise<boolean> }[] = [];
   for (const engine of q.newsEngines) {
-    if (engine === 'gnews') jobs.push(engineGnews(q, out));
-    else if (engine === 'hn') jobs.push(engineHn(q, out));
-    else if (engine === 'rss') jobs.push(engineRss(q, out));
-    else if (engine === 'tavily') jobs.push(engineTavily(q, out));
-    else if (engine === 'exa') jobs.push(engineExa(q, out));
-    else if (engine === 'jsearch') jobs.push(engineJsearch(q, out));
+    if (engine === 'gnews') jobs.push({ name: 'gnews', run: engineGnews(q, out) });
+    else if (engine === 'hn') jobs.push({ name: 'hn', run: engineHn(q, out) });
+    else if (engine === 'rss') jobs.push({ name: 'rss', run: engineRss(q, out) });
+    else if (engine === 'tavily') jobs.push({ name: 'tavily', run: engineTavily(q, out) });
+    else if (engine === 'exa') jobs.push({ name: 'exa', run: engineExa(q, out) });
+    else if (engine === 'jsearch') jobs.push({ name: 'jsearch', run: engineJsearch(q, out) });
   }
   if (q.mode !== 'news') {
     for (const engine of q.scholarEngines) {
-      if (engine === 'arxiv') jobs.push(engineArxiv(q, out));
-      else if (engine === 'hf') jobs.push(engineHfPapers(out));
-      else if (engine === 's2') jobs.push(engineSemanticScholar(q, out));
+      if (engine === 'arxiv') jobs.push({ name: 'arxiv', run: engineArxiv(q, out) });
+      else if (engine === 'hf') jobs.push({ name: 'hf', run: engineHfPapers(out) });
+      else if (engine === 's2') jobs.push({ name: 's2', run: engineSemanticScholar(q, out) });
     }
   }
-  await Promise.allSettled(jobs);
+  const results = await Promise.allSettled(jobs.map((j) => j.run));
+  const failures = results.flatMap((r, i) =>
+    r.status === 'fulfilled' && r.value === true ? [] : [jobs[i].name],
+  );
 
   // Dedupe: URL hash first, then fuzzy title (cross-language duplicates).
   const seenUrls = new Set<string>();
@@ -473,9 +508,10 @@ export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> 
   }
 
   // Rank: papers by score, trending by score, then recency-ish order preserved.
-  return deduped
+  const candidates = deduped
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 12);
+  return { candidates, failures };
 }
 
 /* ------------------------------------------------------------------ */
@@ -599,16 +635,16 @@ export async function extractViaLlamaParse(
  * per-candidate path. Results arrive with extracted page content, so its
  * candidates are usually born past the ≥200-char fulltext gate.
  */
-async function engineJsearch(q: SourceQuery, out: DigestCandidate[]): Promise<void> {
-  if (!q.jinaKey) return;
+async function engineJsearch(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.jinaKey) return true;
   const query = q.topics.join(' ');
-  if (!query) return;
+  if (!query) return true;
   const res = await fetchWithTimeout(
     `https://s.jina.ai/${encodeURIComponent(query)}`,
     { headers: { Authorization: `Bearer ${q.jinaKey}`, Accept: 'application/json' } },
     30_000,
   );
-  if (!res.ok) return;
+  if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
     data?: {
       title?: string;
@@ -630,5 +666,6 @@ async function engineJsearch(q: SourceQuery, out: DigestCandidate[]): Promise<vo
         .slice(0, 1200),
     });
   }
+  return true;
 }
 

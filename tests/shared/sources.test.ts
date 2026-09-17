@@ -3,6 +3,7 @@ import {
   extractViaJina,
   extractViaLlamaParse,
   gatherSources,
+  gatherSourcesDetailed,
 } from '../../src/shared/sources';
 import type { SourceQuery } from '../../src/shared/sources';
 
@@ -147,6 +148,28 @@ describe('engineSemanticScholar (s2)', () => {
     const cands = await gatherSources(baseQuery({ topics: [] }));
     expect(calls.length).toBe(0);
     expect(cands).toEqual([]);
+  });
+
+  it('detailed report names failed backends and keeps the successes', async () => {
+    mockFetchOnce({ status: 500, body: { data: [] } });
+    const failed = await gatherSourcesDetailed(baseQuery());
+    expect(failed.candidates).toEqual([]);
+    expect(failed.failures).toEqual(['s2']);
+  });
+});
+
+describe('engineHfPapers — id-less papers', () => {
+  it('skips papers without an id instead of archiving a junk /papers/ URL', async () => {
+    mockFetchOnce({
+      status: 200,
+      body: [
+        { paper: { title: 'Orphan paper', summary: 'no id here' } },
+        { paper: { title: 'Good paper', summary: 'has id', id: '2601.00001', upvotes: 3 } },
+      ],
+    });
+    const cands = await gatherSources(baseQuery({ scholarEngines: ['hf'] }));
+    expect(cands.length).toBe(1);
+    expect(cands[0].url).toBe('https://huggingface.co/papers/2601.00001');
   });
 });
 

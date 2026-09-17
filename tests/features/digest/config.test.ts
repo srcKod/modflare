@@ -118,6 +118,45 @@ describe('resolveSlotDomain', () => {
     }
     expect(picks.size).toBeGreaterThan(1);
   });
+
+  it('round-robin cursor scopes to one chat when a chat id is given', async () => {
+    // Review 1, P2-15: multi-chat rotation must not share one global cursor.
+    const seenSql: string[] = [];
+    const seenBinds: unknown[][] = [];
+    const chatDb = {
+      prepare: (sql: string) => {
+        seenSql.push(sql);
+        return {
+          bind: (...b: unknown[]) => {
+            seenBinds.push(b);
+            return { first: async () => ({ c: 1 }) };
+          },
+          first: async () => ({ c: 1 }),
+        };
+      },
+    } as unknown as D1Database;
+    const env = envWith('round-robin');
+    const picked = await resolveSlotDomain(env, chatDb, 'slot', '-1001');
+    expect(picked).toBe(ROTATION_PRESETS[1]);
+    expect(seenSql.some((s) => s.includes('target_chat_id'))).toBe(true);
+    expect(seenBinds.some((b) => b.includes('-1001'))).toBe(true);
+  });
+
+  it('round-robin keeps the global cursor when no chat id is given', async () => {
+    const seenSql: string[] = [];
+    const chatDb = {
+      prepare: (sql: string) => {
+        seenSql.push(sql);
+        return {
+          bind: (..._b: unknown[]) => ({ first: async () => ({ c: 2 }) }),
+          first: async () => ({ c: 2 }),
+        };
+      },
+    } as unknown as D1Database;
+    const picked = await resolveSlotDomain(envWith('round-robin'), chatDb, 'slot');
+    expect(picked).toBe(ROTATION_PRESETS[2]);
+    expect(seenSql.some((s) => s.includes('target_chat_id'))).toBe(false);
+  });
 });
 
 describe('parseSchedule (NEWS_SCHEDULE)', () => {

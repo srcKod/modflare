@@ -266,6 +266,11 @@ document.querySelectorAll('th[data-k]').forEach(th=>{
 ['f-level','f-event','f-decision','f-chat','f-user','f-from','f-to','f-q'].forEach(id=>{
   document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')apply();});
 });
+// Discrete selects reload immediately (same as the digest/bot-queue tabs);
+// text/date inputs keep Enter-to-apply so typing never fires loads.
+['f-level','f-event','f-decision'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',apply);
+});
 
 /* ---- Bot queue tab ---- */
 /** Human-short age of an ISO timestamp: <1m / 42m / 3h 12m / 2d 5h. */
@@ -458,6 +463,7 @@ function dgFilterParams(){
   const g=(id)=>document.getElementById(id).value;
   const domain=g('dg-f-domain');if(domain&&domain!=='all')p.set('domain',domain);
   if(g('dg-f-type'))p.set('type',g('dg-f-type'));
+  if(g('dg-f-tag'))p.set('tag',g('dg-f-tag'));
   if(g('dg-f-from'))p.set('from',g('dg-f-from'));
   if(g('dg-f-to'))p.set('to',g('dg-f-to'));
   if(g('dg-f-minrx'))p.set('min_reactions',g('dg-f-minrx'));
@@ -505,6 +511,8 @@ function kvTable(obj){
     '<tr><td class="k">'+esc(k)+'</td><td class="v">'+esc(v)+'</td></tr>').join('')+'</table>';
 }
 function domainBadge(dm){return dm?'<span class="badge dg-domain-'+esc(dm)+'">'+esc(dm)+'</span>':'<span class="mono">—</span>';}
+/** Intraday slot tag cell (null for untagged legacy / rollup rows). */
+function slotBadge(t){return t?'<span class="badge dg-tag">'+esc(t)+'</span>':'<span class="mono">—</span>';}
 async function loadDigest(){
   const notice=document.getElementById('dg-notice');
   const btn=document.getElementById('dg-refresh');
@@ -558,7 +566,7 @@ async function loadDigest(){
     const sr=await dgGet('/api/digest/stats?'+sp);
     const spub=document.getElementById('dg-published');
     const sstat=document.getElementById('dg-stats');
-    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="row-error"><td colspan="9">Failed to load.</td></tr>';return;}
+    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="row-error"><td colspan="10">Failed to load.</td></tr>';return;}
     const st=await sr.json();
     const sm=st.summary||{};
     sstat.innerHTML=
@@ -578,6 +586,7 @@ async function loadDigest(){
       return '<tr>'+
         '<td><div class="primary">'+esc(p.title||'—')+'</div></td>'+
         '<td>'+typeBadge(p.type)+'</td>'+
+        '<td>'+slotBadge(p.tag)+'</td>'+
         '<td>'+domainBadge(p.domain)+'</td>'+
         '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
         '<td class="mono col-rx-count">'+(a&&a.total!=null?esc(a.total):'—')+'</td>'+
@@ -586,7 +595,7 @@ async function loadDigest(){
         '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
         '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
       '</tr>';
-    }).join(''):'<tr class="empty"><td colspan="9">Nothing published yet.</td></tr>';
+    }).join(''):'<tr class="empty"><td colspan="10">Nothing published yet.</td></tr>';
     document.getElementById('dg-page-info').textContent=
       'Page '+dgPage+' · '+(st.posts||[]).length+' of '+st.total+(st.has_more?' (more)':'');
     document.getElementById('dg-prev').disabled=dgPage<=1;
@@ -698,7 +707,7 @@ document.getElementById('dg-apply').addEventListener('click',dgApply);
 ['dg-f-from','dg-f-to','dg-f-minrx'].forEach(id=>{
   document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')dgApply();});
 });
-['dg-f-domain','dg-f-type','dg-f-trend'].forEach(id=>{
+['dg-f-domain','dg-f-type','dg-f-tag','dg-f-trend'].forEach(id=>{
   document.getElementById(id).addEventListener('change',dgApply);
 });
 document.getElementById('dg-prev').addEventListener('click',()=>{if(dgPage>1){dgPage--;loadDigest();}});

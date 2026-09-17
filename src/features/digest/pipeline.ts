@@ -18,9 +18,9 @@ import {
 } from '../../core/telegram';
 import type { SendResult } from '../../core/telegram';
 import type { Env, TelegramUpdate } from '../../core/types';
-import { sanitizeTelegramHtml, renderedLength } from '../../shared/telegram-html';
+import { sanitizeTelegramHtml } from '../../shared/telegram-html';
 import {
-  gatherSources,
+  gatherSourcesDetailed,
   extractArticleText,
   extractViaJina,
   extractViaLlamaParse,
@@ -329,7 +329,9 @@ async function findSlotRow(
 }
 
 async function publishedUrlHashes(db: D1Database): Promise<Set<string>> {
-  const res = await db.prepare('SELECT url_hash FROM digest_items LIMIT 20000').all<{
+  // Newest-first: when the registry outgrows the cap, ancient hashes (whose
+  // stories are long stale) fall off — not an arbitrary slice.
+  const res = await db.prepare('SELECT url_hash FROM digest_items ORDER BY id DESC LIMIT 20000').all<{
     url_hash: string;
   }>();
   return new Set((res.results ?? []).map((r) => r.url_hash));
@@ -363,6 +365,16 @@ async function loadHistory(
     .bind(since, chatId)
     .all<HistoryRow>();
   return res.results ?? [];
+}
+
+/** Stored domain for a post: rollups synthesize cross-domain history, so
+ *  only daily runs carry a domain label (a rotation-picked label on a
+ *  weekly/monthly post is actively misleading; review 1, P2-19). */
+export function postDomainFor(
+  cfg: DigestConfig,
+  type: DigestContentType,
+): string | null {
+  return type === 'daily' ? cfg.effectiveDomain : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -403,6 +415,9 @@ export async function resolveSlotDomain(
   env: Env,
   db: D1Database,
   slotKey: string,
+  /** Scope the round-robin cursor to one channel (multi-chat future-proof;
+   *  omitted = global cursor, the historical behavior). */
+  chatId?: string,
 ): Promise<string> {
   const configured = (env.NEWS_DOMAIN || 'tech').trim();
   if (!isRotationDomain(configured)) return configured;
@@ -412,11 +427,18 @@ export async function resolveSlotDomain(
     for (let i = 0; i < slotKey.length; i++) h = (h * 31 + slotKey.charCodeAt(i)) | 0;
     return presets[Math.abs(h) % presets.length];
   }
+  const binds: (string | number)[] = [];
+  let chatFilter = '';
+  if (chatId) {
+    chatFilter = ' AND target_chat_id = ?';
+    binds.push(chatId);
+  }
   const res = await db
     .prepare(
       `SELECT COUNT(*) AS c FROM digest_posts WHERE type = 'daily'
-       AND status IN ('draft','published')`,
+       AND status IN ('draft','published')${chatFilter}`,
     )
+    .bind(...binds)
     .first<{ c: number }>();
   const attempted = Number(res?.c ?? 0);
   return presets[attempted % presets.length];
@@ -510,7 +532,7 @@ export async function runDigest(
   // (not cfg.domain) is what gets stored in digest_posts.domain. Re-apply the
   // slot engine/mode override afterwards since resolveDigestConfig rebuilds them.
   if (cfg.rotation) {
-    const picked = await resolveSlotDomain(env, db, slotKey);
+    const picked = await resolveSlotDomain(env, db, slotKey, cfg.targetChatId);
     cfg = resolveDigestConfig(env, picked, overrides);
     if (slot) cfg = applySlotOverride(cfg, slot);
   }
@@ -593,7 +615,18 @@ export async function runDigest(
       }
       prompt = buildDeepPrompt(cfg, candidates);
     } else if (!prompt) {
-      candidates = await gatherSources(cfg);
+      const gathered = await gatherSourcesDetailed(cfg);
+      // Partial backend failure used to degrade silently — name the dead
+      // engines in the audit trail (plan §10, review 1 P2-11).
+      if (gathered.failures.length) {
+        await logger.warn('news_warning', {
+          chat_id: Number(cfg.targetChatId),
+          decision: 'warn',
+          reason: 'engines_failed',
+          extra: { slot: slotKey, type, engines: gathered.failures },
+        });
+      }
+      candidates = gathered.candidates;
       if (!candidates.length) {
         await logger.warn('news_skipped', {
           chat_id: Number(cfg.targetChatId),
@@ -625,35 +658,43 @@ export async function runDigest(
       // Jina Reader; PDF → Jina Reader → LlamaParse. Never pay for what we
       // already have (≥200-char snippets skip) and never exceed the per-run
       // cap (NEWS_EXTRACT_MAX_PER_RUN) — more slots must not scale credits.
+      // Candidates extract in parallel (bounded by the cap): serial was
+      // minutes worst-case with zero benefit (independent URLs).
       if (cfg.fetchFulltext) {
-        for (const c of candidates.slice(0, cfg.extractMax)) {
-          if (c.snippet && c.snippet.length >= 200) continue;
-          try {
-            const isPdf = /\.pdf(\?|$)/i.test(c.url);
-            if (isPdf) {
-              // Native fetch+HTMLRewriter is useless on PDFs; Jina reads them
-              // natively, LlamaParse is the deep fallback (1 credit/page).
-              c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
-              if ((!c.snippet || c.snippet.length < 120) && cfg.llamaKey) {
-                c.snippet = (await extractViaLlamaParse(cfg, c.url)) || c.snippet;
+        await Promise.allSettled(
+          candidates.slice(0, cfg.extractMax).map(async (c) => {
+            if (c.snippet && c.snippet.length >= 200) return;
+            try {
+              const isPdf = /\.pdf(\?|$)/i.test(c.url);
+              if (isPdf) {
+                // Native fetch+HTMLRewriter is useless on PDFs; Jina reads them
+                // natively (keyed only — keyless JSON-mode parse always fails,
+                // so skip that guaranteed no-op subrequest), LlamaParse is the
+                // deep fallback (1 credit/page).
+                if (cfg.jinaKey) {
+                  c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
+                }
+                if ((!c.snippet || c.snippet.length < 120) && cfg.llamaKey) {
+                  c.snippet = (await extractViaLlamaParse(cfg, c.url)) || c.snippet;
+                }
+              } else {
+                const res = await fetchWithTimeout(c.url, {}, 10_000);
+                if (res.ok) {
+                  const html = await res.text();
+                  c.snippet = await extractArticleText(html);
+                }
+                if ((!c.snippet || c.snippet.length < 120) && cfg.jinaKey) {
+                  c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
+                }
               }
-            } else {
-              const res = await fetchWithTimeout(c.url, {}, 10_000);
-              if (res.ok) {
-                const html = await res.text();
-                c.snippet = await extractArticleText(html);
-              }
-              if ((!c.snippet || c.snippet.length < 120) && cfg.jinaKey) {
-                c.snippet = (await extractViaJina(cfg, c.url)) || c.snippet;
-              }
+            } catch {
+              // extraction failure — summarize from snippet/title
             }
-          } catch {
-            // extraction failure — summarize from snippet/title
-          }
-          // Remember the raw (post-extraction) text verbatim before the LLM
-          // sees it — this is what gets archived in digest_items.extracted_text.
-          if (c.snippet) extractedByUrl.set(c.url, c.snippet);
-        }
+            // Remember the raw (post-extraction) text verbatim before the LLM
+            // sees it — this is what gets archived in digest_items.extracted_text.
+            if (c.snippet) extractedByUrl.set(c.url, c.snippet);
+          }),
+        );
       }
       prompt = buildDailyPrompt(cfg, candidates);
     }
@@ -713,7 +754,7 @@ export async function runDigest(
       type,
       now,
       cfg.mode,
-      cfg.effectiveDomain,
+      postDomainFor(cfg, type),
       cfg.targetChatId,
       parsed.title,
       body,

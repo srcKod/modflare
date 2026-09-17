@@ -315,9 +315,10 @@ async function handleDigestSeed(
 
 /**
  * Published-posts view with the Digest filter bar (plan §23.2): domain /
- * type / date range / status / min reactions / trend — all server-side.
- * Trend and min_reactions depend on presentation-time analytics, so the
- * scan window (200 latest) is fetched, decorated, filtered, then paginated.
+ * type / slot tag / date range / status / min reactions / trend — all
+ * server-side. Trend and min_reactions depend on presentation-time analytics,
+ * so the scan window (200 latest) is fetched, decorated, filtered, then
+ * paginated.
  */
 async function handleDigestStats(request: Request, env: Env): Promise<Response> {
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
@@ -335,6 +336,13 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
     if (type === 'daily' || type === 'weekly' || type === 'monthly') {
       conds.push('dp.type = ?');
       binds.push(type);
+    }
+    // Intraday slot tag lives in the slot-key suffix (`<date>T<hh>:<tag>`);
+    // untagged legacy keys simply don't match a tag filter.
+    const tag = (q.get('tag') || '').trim();
+    if (tag === 'headlines' || tag === 'trending' || tag === 'papers' || tag === 'deep') {
+      conds.push(`dp.slot_key LIKE '%' || ':' || ?`);
+      binds.push(tag);
     }
     const from = (q.get('from') || '').trim();
     if (from && !Number.isNaN(Date.parse(from))) {
@@ -354,7 +362,7 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
 
     const scan = await env.DB.prepare(
       `SELECT dp.id, dp.title, dp.type, dp.domain, dp.published_at,
-              dp.message_id, dp.target_chat_id, dp.edited_at, dp.body
+              dp.message_id, dp.target_chat_id, dp.edited_at, dp.body, dp.slot_key
        FROM digest_posts dp ${where}
        ORDER BY dp.published_at DESC LIMIT 200`,
     )
@@ -369,6 +377,7 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
         target_chat_id: string;
         edited_at: string | null;
         body: string | null;
+        slot_key: string | null;
       }>();
     const rows = scan.results ?? [];
 
@@ -398,6 +407,7 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
       title: r.title,
       type: r.type,
       domain: r.domain,
+      tag: slotTagOf(r.slot_key),
       published_at: r.published_at,
       message_id: r.message_id,
       target_chat_id: r.target_chat_id,
@@ -452,6 +462,21 @@ async function handleDigestStats(request: Request, env: Env): Promise<Response> 
 function minReactionsValue(q: URLSearchParams): number {
   const n = Number((q.get('min_reactions') || '0').trim());
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Intraday slot tag from a slot key (`<date>T<hh>:<tag>`). Untagged legacy
+ * keys and rollup keys (weekly-*, monthly-*) yield null — the tag column
+ * shows a dash for those instead of guessing.
+ */
+export function slotTagOf(
+  slotKey: string | null,
+): 'headlines' | 'trending' | 'papers' | 'deep' | null {
+  const m = /:([A-Za-z]+)$/.exec(slotKey ?? '');
+  const tag = m?.[1];
+  return tag === 'headlines' || tag === 'trending' || tag === 'papers' || tag === 'deep'
+    ? tag
+    : null;
 }
 
 async function handleDigestSettings(env: Env): Promise<Response> {

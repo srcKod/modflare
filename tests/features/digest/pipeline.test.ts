@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeSlotKey,
+  postDomainFor,
   resolveDigestType,
 } from '../../../src/features/digest/pipeline';
 
@@ -101,5 +102,16 @@ describe('resolveDigestType', () => {
       weeklyDay: 2,
     } as never;
     expect(resolveDigestType(schedEnv, cfg, lp(9))).toEqual({ type: 'monthly' });
+  });
+});
+
+describe('postDomainFor', () => {
+  // Review 1, P2-19: rollups synthesize cross-domain history — labeling one
+  // with a rotation-picked domain misleads the filter and future retrieval.
+  it('labels daily runs, nulls rollups', () => {
+    const cfg = { effectiveDomain: 'tech' } as never;
+    expect(postDomainFor(cfg, 'daily')).toBe('tech');
+    expect(postDomainFor(cfg, 'weekly')).toBeNull();
+    expect(postDomainFor(cfg, 'monthly')).toBeNull();
   });
 });

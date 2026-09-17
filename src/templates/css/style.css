@@ -41,6 +41,9 @@ a.logout{color:#2563eb;text-decoration:none;font-size:.9rem}
 /* Bot queue tab */
 .bq-table th{cursor:default}
 .badge.due{background:#fef3c7;color:#b45309}
+/* Intraday slot tag cell (headlines/trending/papers/deep) — neutral slate so
+   it doesn't compete with the per-domain colors or the type badge. */
+.badge.dg-tag{background:#f1f5f9;color:#334155}
 .badge.bq-kind-fun{background:#ecfdf5;color:#047857}
 .badge.bq-kind-default{background:#f3f4f6;color:#4b5563}
 .bq-msg .reason{

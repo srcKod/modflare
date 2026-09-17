@@ -137,3 +137,63 @@ describe('runDigestFromHour always drafts (never publishes)', () => {
     expect(prompt).toContain('French');
   });
 });
+
+describe('PDF extraction without keys skips the keyless Jina call', () => {
+  // Review 1, P2-12: keyless Jina JSON-mode parse always fails, so the PDF
+  // branch must not burn the subrequest at all when no key is configured.
+  const PDF_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Google News</title>
+<item><title>Interesting paper</title><link>https://example.com/paper.pdf</link><pubDate>Tue, 16 Sep 2026 05:00:00 GMT</pubDate><source url="https://example.com">Example</source></item>
+</channel></rss>`;
+
+  it('never fetches r.jina.ai keyless and still drafts', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        const u = String(url);
+        urls.push(u);
+        if (u.includes('api.telegram.org')) {
+          throw new Error('seed attempted a live Telegram send');
+        }
+        if (u.includes('news.google.com')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async (): Promise<string> => PDF_XML,
+            json: async (): Promise<unknown> => null,
+          };
+        }
+        if (u.includes('chat/completions')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async (): Promise<string> => LLM_BODY,
+            json: async (): Promise<unknown> => JSON.parse(LLM_BODY),
+          };
+        }
+        return {
+          ok: false,
+          status: 500,
+          text: async (): Promise<string> => '',
+          json: async (): Promise<unknown> => null,
+        };
+      }),
+    );
+    const seen: string[] = [];
+    const env = {
+      DB: stubDb(seen),
+      TIMEZONE: 'Asia/Baghdad',
+      NEWS_TARGET_CHAT_ID: '-1001341446217',
+      NEWS_AUTO_PUBLISH: 'true',
+      NEWS_FETCH_FULLTEXT: 'true',
+      DIGEST_BASE_URL: 'https://gateway.example/compat',
+      DIGEST_API_KEY: 'k',
+      DIGEST_MODEL: 'test-model',
+    } as unknown as Env;
+    await runDigestFromHour(env, 9, 'headlines');
+    expect(urls.some((u) => u.includes('r.jina.ai'))).toBe(false);
+    expect(seen.some((s) => s.includes('INSERT INTO digest_posts'))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
