@@ -504,6 +504,8 @@ async function handleDigestSettings(env: Env): Promise<Response> {
     targetChatId: cfg.targetChatId,
     rollupHour: rollupHourFromSchedule(parseSchedule(effectiveSchedule(env, overrides))),
     localHour: localParts(env.TIMEZONE).hour,
+    // Display timezone for the panel (worker stores UTC; times render here).
+    timezone: env.TIMEZONE || 'UTC',
     weeklyEnabled: cfg.weeklyEnabled,
     monthlyEnabled: cfg.monthlyEnabled,
     language: cfg.language,

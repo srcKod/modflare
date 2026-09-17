@@ -173,12 +173,17 @@ async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<boolean
     }[];
   } | null;
   for (const h of json?.hits ?? []) {
-    if (!h.title || !h.url) continue;
+    if (!h.title) continue;
+    // Ask/Show self-posts carry no publisher URL — link the HN thread itself
+    // (objectID is always present) instead of dropping top-signal content.
+    // story_text (mapped below) is often the richest free snippet we get.
+    const url = h.url || (h.objectID ? `https://news.ycombinator.com/item?id=${h.objectID}` : '');
+    if (!url) continue;
     out.push({
       tag: 'trending',
       title: h.title,
-      url: h.url,
-      source: domainOf(h.url) || 'Hacker News',
+      url,
+      source: h.url ? domainOf(h.url) || 'Hacker News' : 'Hacker News',
       date: h.created_at,
       score: h.points,
       // story_text is Ask/Show HN self-text — already in the response, so this

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveDigestConfig, effectiveSchedule } from '../../../src/features/digest/config';
+import { digestAdminRoutes } from '../../../src/features/digest/admin';
 import { SETTING_DEFS } from '../../../src/core/settings';
 import type { Env } from '../../../src/core/types';
 
@@ -158,5 +159,31 @@ describe('effectiveSchedule (schedule override → env fallback)', () => {
         digest_schedule: '   ',
       }),
     ).toBe('9:headlines');
+  });
+});
+
+describe('digest settings view (panel)', () => {
+  // The panel renders worker-UTC timestamps in the display timezone, served
+  // here (review 1, P2-20b). No DB needed — all env/default resolution.
+  async function settingsView(env: Env) {
+    const route = digestAdminRoutes.find(
+      (r) => r.method === 'GET' && r.rest === '/api/digest/settings',
+    )!;
+    const res = await route.handler(
+      new Request('http://localhost/admin/api/digest/settings'),
+      env,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as { timezone: string };
+  }
+
+  it('exposes the configured timezone', async () => {
+    const body = await settingsView(mkEnv({ TIMEZONE: 'Asia/Baghdad' }));
+    expect(body.timezone).toBe('Asia/Baghdad');
+  });
+
+  it('defaults to UTC when unset', async () => {
+    const body = await settingsView(mkEnv({}));
+    expect(body.timezone).toBe('UTC');
   });
 });

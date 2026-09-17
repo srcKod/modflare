@@ -205,6 +205,37 @@ describe('engineHn — story_text snippet', () => {
     expect(cands[0].snippet).toBe('Hi HN! This is my launch post with details.');
     expect(cands[1].snippet).toBeUndefined();
   });
+
+  it('links Ask self-posts (no publisher URL) to their HN thread', async () => {
+    mockFetchOnce({
+      status: 200,
+      body: {
+        hits: [
+          {
+            title: 'Ask HN: How do you review code?',
+            url: null,
+            points: 210,
+            objectID: '424242',
+            created_at: '2026-09-15T02:00:00Z',
+            story_text: 'What is your code review process these days?',
+          },
+          {
+            title: 'Untitled ghost',
+            url: null,
+            points: 5,
+          },
+        ],
+      },
+    });
+    const cands = await gatherSources(
+      baseQuery({ mode: 'news', newsEngines: ['hn'], scholarEngines: [] }),
+    );
+    // The Ask post survives via its thread link; the id-less ghost is dropped.
+    expect(cands.length).toBe(1);
+    expect(cands[0].url).toBe('https://news.ycombinator.com/item?id=424242');
+    expect(cands[0].source).toBe('Hacker News');
+    expect(cands[0].snippet).toBe('What is your code review process these days?');
+  });
 });
 
 describe('extractViaJina — JSON mode', () => {

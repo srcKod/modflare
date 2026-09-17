@@ -15,6 +15,46 @@ function esc(s){return (s==null?'':String(s))
   .replace(/"/g,'&quot;');}
 function badge(kind,label){return '<span class="badge '+kind+'">'+esc(label)+'</span>';}
 function levelBadge(l){return badge(l, l||'—');}
+/* Panel display timezone: the worker stores UTC everywhere; times render in
+   the worker's TIMEZONE (e.g. Asia/Baghdad) so the panel matches the digest
+   schedule. Served by /api/digest/settings, cached after the first load. */
+let PANEL_TZ='UTC';
+function fmtT(iso){
+  const ms=Date.parse(iso||'');
+  if(isNaN(ms))return '—';
+  try{
+    const f=new Intl.DateTimeFormat('en-CA',{timeZone:PANEL_TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    const g=t=>f.formatToParts(new Date(ms)).find(p=>p.type===t)?.value??'';
+    return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}`;
+  }catch{return String(iso).replace('T',' ').replace('Z','');}
+}
+/** Short GMT offset for header labels (Asia/Baghdad -> GMT+3). */
+function tzLabel(){
+  try{
+    const s=new Date().toLocaleString('en',{timeZone:PANEL_TZ,timeZoneName:'shortOffset'});
+    const m=/GMT([+-]\d+)/.exec(s);
+    return m?'GMT'+m[1]:PANEL_TZ;
+  }catch{return PANEL_TZ;}
+}
+/** Stamp the offset onto the time-column headers once the zone is known. */
+function labelTzHeaders(){
+  const lab=tzLabel();
+  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt+' ('+lab+')';};
+  set('th-ts','Time');set('th-sent','Sent');set('th-run','Run');set('th-pub','Published');
+}
+let tzPromise=null;
+function ensureTz(){
+  if(!tzPromise){
+    tzPromise=(async()=>{
+      try{
+        const r=await dgGet('/api/digest/settings');
+        if(r.ok){const s=await r.json();if(s.timezone)PANEL_TZ=s.timezone;}
+      }catch{}
+      labelTzHeaders();
+    })();
+  }
+  return tzPromise;
+}
 function decisionBadge(d){return d==='delete'?badge('delete','delete')
   :d==='keep'?badge('keep','keep'):'<span class="mono">—</span>';}
 /**
@@ -94,7 +134,7 @@ function idCell(handle, name, id){
  */
 function detailsBody(row){
   const v=x=>x==null||x===''?'—':x;
-  const fmtTs=(row.ts||'').replace('T',' ').replace('Z','');
+  const fmtTs=fmtT(row.ts);
   const parts=[
     // 1 — metadata bar: ts + id
     '<div class="d-meta">'+
@@ -186,6 +226,7 @@ async function loadEvents(){
   for(const e of evts){const o=document.createElement('option');o.value=e;o.textContent=e;sel.appendChild(o);}
 }
 async function loadRows(){
+  await ensureTz();
   const p=qs(); p.set('page',page); p.set('per_page',perPage);
   const r=await fetch(base+'/api/logs?'+p);
   const tbody=document.getElementById('rows');
@@ -197,7 +238,7 @@ async function loadRows(){
       const chat=idCell(row.chat_username, row.chat_title, row.chat_id);
       const user=idCell(row.username, row.full_name, row.user_id);
       return '<tr data-i="'+i+'">'+
-        '<td class="mono">'+esc((row.ts||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+esc(fmtT(row.ts))+'</td>'+
         '<td>'+levelBadge(row.level)+'</td>'+
         '<td>'+esc(row.event)+'</td>'+
         '<td>'+chat+'</td>'+
@@ -285,6 +326,7 @@ function ageStr(iso){
   return Math.floor(h/24)+'d '+(h%24)+'h';
 }
 async function loadQueue(){
+  await ensureTz();
   const tbody=document.getElementById('bq-rows');
   const notice=document.getElementById('bq-notice');
   const kind=document.getElementById('bq-kind').value;
@@ -312,7 +354,7 @@ async function loadQueue(){
       '<td>'+idCell(row.chat_username,null,row.chat_id)+'</td>'+
       '<td class="bq-msg"><div class="reason">'+esc(row.message)+'</div></td>'+
       '<td><span class="badge bq-kind-'+esc(row.kind)+'">'+esc(row.kind)+'</span></td>'+
-      '<td class="mono">'+esc((row.sent_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+      '<td class="mono">'+esc(fmtT(row.sent_at))+'</td>'+
       '<td class="mono">'+ageStr(row.sent_at)+
         (row.eligible?' <span class="badge due">due</span>':'')+'</td>'+
       '<td class="mono">'+esc(row.attempts)+'</td>'+
@@ -514,6 +556,7 @@ function domainBadge(dm){return dm?'<span class="badge dg-domain-'+esc(dm)+'">'+
 /** Intraday slot tag cell (null for untagged legacy / rollup rows). */
 function slotBadge(t){return t?'<span class="badge dg-tag">'+esc(t)+'</span>':'<span class="mono">—</span>';}
 async function loadDigest(){
+  await ensureTz();
   const notice=document.getElementById('dg-notice');
   const btn=document.getElementById('dg-refresh');
   const warnNotice=(msg)=>{notice.hidden=false;notice.textContent=msg;dgToast(msg,'warn');};
@@ -545,7 +588,7 @@ async function loadDigest(){
         '<td>'+domainBadge(row.domain)+'</td>'+
         '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
         '<td><div class="reason">'+renderTgHtml(row.preview||'')+'</div></td>'+
-        '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+esc(fmtT(row.run_at))+'</td>'+
         '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
         (row.status==='failed'
           ?'<td><button type="button" class="details-btn" data-dg-retry="'+row.id+'">Retry</button></td>'
@@ -588,7 +631,7 @@ async function loadDigest(){
         '<td>'+typeBadge(p.type)+'</td>'+
         '<td>'+slotBadge(p.tag)+'</td>'+
         '<td>'+domainBadge(p.domain)+'</td>'+
-        '<td class="mono">'+esc((p.published_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+esc(fmtT(p.published_at))+'</td>'+
         '<td class="mono col-rx-count">'+(a&&a.total!=null?esc(a.total):'—')+'</td>'+
         '<td class="col-rx">'+(a&&a.breakdown?rxChips(a.breakdown,st.signal_map):'<span class="mono">—</span>')+'</td>'+
         '<td class="mono">'+trendChip(a)+'</td>'+
