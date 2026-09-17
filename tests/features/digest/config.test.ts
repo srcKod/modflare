@@ -140,6 +140,8 @@ describe('resolveSlotDomain', () => {
     expect(picked).toBe(ROTATION_PRESETS[1]);
     expect(seenSql.some((s) => s.includes('target_chat_id'))).toBe(true);
     expect(seenBinds.some((b) => b.includes('-1001'))).toBe(true);
+    // Deep (analysis) slots never advance the rotation cursor.
+    expect(seenSql.some((s) => s.includes("slot_key NOT LIKE '%:deep'"))).toBe(true);
   });
 
   it('round-robin keeps the global cursor when no chat id is given', async () => {

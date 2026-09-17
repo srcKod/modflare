@@ -372,12 +372,17 @@ async function loadHistory(
 
 /** Stored domain for a post: rollups synthesize cross-domain history, so
  *  only daily runs carry a domain label (a rotation-picked label on a
- *  weekly/monthly post is actively misleading; review 1, P2-19). */
+ *  weekly/monthly post is actively misleading; review 1, P2-19). Deep slots
+ *  under rotation are likewise unlabeled — they analyze the whole day, not
+ *  a domain (fixed-domain deploys keep their label). */
 export function postDomainFor(
   cfg: DigestConfig,
   type: DigestContentType,
+  tag?: SlotTag,
 ): string | null {
-  return type === 'daily' ? cfg.effectiveDomain : null;
+  if (type !== 'daily') return null;
+  if (tag === 'deep' && cfg.rotation) return null;
+  return cfg.effectiveDomain;
 }
 
 /* ------------------------------------------------------------------ */
@@ -439,7 +444,8 @@ export async function resolveSlotDomain(
   const res = await db
     .prepare(
       `SELECT COUNT(*) AS c FROM digest_posts WHERE type = 'daily'
-       AND status IN ('draft','published')${chatFilter}`,
+       AND status IN ('draft','published')${chatFilter}
+       AND slot_key NOT LIKE '%:deep'`,
     )
     .bind(...binds)
     .first<{ c: number }>();
@@ -534,7 +540,10 @@ export async function runDigest(
   // topics/engines/locale all match what actually runs. cfg.effectiveDomain
   // (not cfg.domain) is what gets stored in digest_posts.domain. Re-apply the
   // slot engine/mode override afterwards since resolveDigestConfig rebuilds them.
-  if (cfg.rotation) {
+  // Deep slots opt out entirely: they analyze the day's published items
+  // (whatever domains the day produced), so a rotation pick would be a
+  // fiction — no rebuild, no cursor turn consumed, NULL domain label.
+  if (cfg.rotation && slot?.tag !== 'deep') {
     const picked = await resolveSlotDomain(env, db, slotKey, cfg.targetChatId);
     cfg = resolveDigestConfig(env, picked, overrides);
     if (slot) cfg = applySlotOverride(cfg, slot);
@@ -555,8 +564,26 @@ export async function runDigest(
 
   await logger.debug('news_run_started', {
     chat_id: Number(cfg.targetChatId),
-    extra: { slot: slotKey, type, domain: cfg.effectiveDomain, mode: cfg.mode },
+    extra: { slot: slotKey, type, domain: postDomainFor(cfg, type, slot?.tag), mode: cfg.mode },
   });
+
+  // Custom-domain guard: `custom` ships no topics of its own — without
+  // NEWS_TOPICS the keyword engines run match-all mush. Warn (don't fail:
+  // the trending slot is deliberately topic-agnostic, and scholar engines
+  // degrade gracefully on their own).
+  if (
+    cfg.domain === 'custom' &&
+    cfg.topics.length === 0 &&
+    slot?.topics === undefined &&
+    slot?.tag !== 'deep'
+  ) {
+    await logger.warn('news_warning', {
+      chat_id: Number(cfg.targetChatId),
+      decision: 'warn',
+      reason: 'custom_no_topics',
+      extra: { slot: slotKey, type },
+    });
+  }
 
   // Gather: fresh engines, or D1 history for weekly/monthly.
   let candidates: DigestCandidate[] = [];
@@ -759,7 +786,7 @@ export async function runDigest(
       type,
       now,
       cfg.mode,
-      postDomainFor(cfg, type),
+      postDomainFor(cfg, type, slot?.tag),
       cfg.targetChatId,
       parsed.title,
       body,

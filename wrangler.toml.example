@@ -126,11 +126,17 @@ LOG_ENABLED = "true"
 # src/features/digest/pipeline.ts resolves the content type per gate tick.
 # ---------------------------------------------------------------------------
 ENABLE_NEWS_DIGEST = "true"
-NEWS_DOMAIN = "tech"                # tech | finance | science | health | custom
-                                    # (`tech` spans western + Chinese sources)
+NEWS_DOMAIN = "tech"                # preset: tech | finance | science | health
+                                     # (`tech` spans western + Chinese sources)
+                                     # | custom (free-form, see NEWS_TOPICS below)
+                                     # | round-robin (alias: all) | random
 # Rotation (one preset per daily slot, recorded in the post's domain):
 #   round-robin (alias: all) — cycle tech -> finance -> science -> health
 #   random — deterministic slot-keyed pick (retry-safe)
+#   NOTE: the `deep` slot does not rotate — it analyzes today's already-
+#   published items (whatever domains the day produced), so it takes no
+#   rotation turn, consumes no cursor position, and stays unlabeled under
+#   rotation. (Fixed-domain deploys label the deep post with their domain.)
 # NEWS_DOMAIN = "round-robin"
 NEWS_MODE = "both"                  # news | papers | both
 NEWS_TARGET_CHAT_ID = "-100XXXXXXXXXX"  # channel/group id; bot must be an admin there
@@ -175,6 +181,12 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 #                         Fast tier 1 credit/page). Only used for .pdf URLs.
 # NEWS_RSS_FEEDS = "https://www.qbitai.com/feed"
 # NEWS_TOPICS = "artificial intelligence, developer tools"
+#   REQUIRED when NEWS_DOMAIN=custom: custom is the free-form domain — it
+#   ships no topics of its own, so set any comma-separated subject list here
+#   (e.g. "quantum computing, photonics job market"). Runs with custom + no
+#   topics log a custom_no_topics warning and gather match-all mush instead
+#   of anything topical. Refine further with NEWS_ENGINE /
+#   NEWS_ARXIV_CATEGORIES / NEWS_RSS_FEEDS / NEWS_INCLUDE_DOMAINS below.
 # NEWS_ARXIV_CATEGORIES = "cs.AI,cs.CL"
 # NEWS_INCLUDE_DOMAINS = "arstechnica.com, theverge.com"
 # NEWS_DRAFT_NOTIFY_CHAT_ID = "-100XXXXXXXXXX"  # unset -> DM every ADMIN_USER_IDS

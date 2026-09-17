@@ -65,16 +65,26 @@ function stubFetch(bodies?: string[]) {
 }
 
 /** D1 stub recording every prepared statement for post-run assertions. */
-function stubDb(seen: string[], settingsRows: { key: string; value: string }[] = []) {
-  const stmt = {
-    bind: (..._a: unknown[]) => stmt,
-    first: async () => null,
-    all: async () => ({ results: settingsRows }),
-    run: async () => ({ meta: { last_row_id: 7, changes: 1 } }),
-  };
+function stubDb(
+  seen: string[],
+  settingsRows: { key: string; value: string }[] = [],
+  bound: { sql: string; args: unknown[] }[] = [],
+  deepRows: object[] = [],
+) {
   return {
     prepare: (sql: string) => {
       seen.push(sql);
+      const stmt = {
+        bind: (...a: unknown[]) => {
+          bound.push({ sql, args: a });
+          return stmt;
+        },
+        first: async () => null,
+        all: async () => ({
+          results: sql.includes('FROM digest_items') ? deepRows : settingsRows,
+        }),
+        run: async () => ({ meta: { last_row_id: 7, changes: 1 } }),
+      };
       return stmt;
     },
   } as unknown as D1Database;
@@ -194,6 +204,47 @@ describe('PDF extraction without keys skips the keyless Jina call', () => {
     await runDigestFromHour(env, 9, 'headlines');
     expect(urls.some((u) => u.includes('r.jina.ai'))).toBe(false);
     expect(seen.some((s) => s.includes('INSERT INTO digest_posts'))).toBe(true);
-    vi.unstubAllGlobals();
+  });
+});
+
+describe('deep slot under rotation takes no turn and no label', () => {
+  // Deep analyzes the day's published items (whatever domains produced
+  // them): no rotation rebuild (no COUNT cursor query), NULL stored domain.
+  const DEEP_ROWS = [
+    {
+      url: 'https://example.com/deep-1',
+      title: 'Deep one',
+      source: 'Example',
+      extracted_text: 'Full archived text of deep one with enough substance.',
+    },
+    {
+      url: 'https://example.com/deep-2',
+      title: 'Deep two',
+      source: 'Example',
+      extracted_text: 'Full archived text of deep two with enough substance.',
+    },
+  ];
+
+  it('skips the rotation rebuild and stores a NULL domain', async () => {
+    const seen: string[] = [];
+    const bound: { sql: string; args: unknown[] }[] = [];
+    const env = {
+      DB: stubDb(seen, [], bound, DEEP_ROWS),
+      TIMEZONE: 'Asia/Baghdad',
+      NEWS_TARGET_CHAT_ID: '-1001341446217',
+      NEWS_DOMAIN: 'round-robin',
+      NEWS_AUTO_PUBLISH: 'true',
+      DIGEST_BASE_URL: 'https://gateway.example/compat',
+      DIGEST_API_KEY: 'k',
+      DIGEST_MODEL: 'test-model',
+    } as unknown as Env;
+    const { slotKey } = await runDigestFromHour(env, 21, 'deep');
+    expect(slotKey).toMatch(/T21:deep$/);
+    // No rotation cursor query ran for the deep slot.
+    expect(seen.some((s) => s.includes('COUNT(*)'))).toBe(false);
+    // digest_posts bind order: slot_key, type, run_at, mode, domain, ...
+    const postInsert = bound.find((b) => b.sql.includes('INSERT INTO digest_posts'));
+    expect(postInsert).toBeDefined();
+    expect(postInsert!.args[4]).toBeNull();
   });
 });

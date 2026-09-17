@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   computeSlotKey,
   postDomainFor,
   resolveDigestType,
+  runDigest,
 } from '../../../src/features/digest/pipeline';
+import {
+  resolveDigestConfig,
+  slotForTag,
+} from '../../../src/features/digest/config';
+import type { AuditLogger } from '../../../src/core/logger';
+import type { Env } from '../../../src/core/types';
 
 describe('computeSlotKey', () => {
   it('builds a daily key from date + hour', () => {
@@ -105,13 +112,61 @@ describe('resolveDigestType', () => {
   });
 });
 
-describe('postDomainFor', () => {
-  // Review 1, P2-19: rollups synthesize cross-domain history — labeling one
+describe('postDomainFor', () => {  // Review 1, P2-19: rollups synthesize cross-domain history — labeling one
   // with a rotation-picked domain misleads the filter and future retrieval.
   it('labels daily runs, nulls rollups', () => {
     const cfg = { effectiveDomain: 'tech' } as never;
     expect(postDomainFor(cfg, 'daily')).toBe('tech');
     expect(postDomainFor(cfg, 'weekly')).toBeNull();
     expect(postDomainFor(cfg, 'monthly')).toBeNull();
+  });
+
+  it('nulls deep slots under rotation, keeps the fixed-domain label', () => {
+    const rotating = { effectiveDomain: 'tech', rotation: { strategy: 'round-robin', presets: [] } } as never;
+    expect(postDomainFor(rotating, 'daily', 'deep')).toBeNull();
+    expect(postDomainFor(rotating, 'daily', 'headlines')).toBe('tech');
+    const fixed = { effectiveDomain: 'tech', rotation: null } as never;
+    expect(postDomainFor(fixed, 'daily', 'deep')).toBe('tech');
+  });
+});
+
+describe('custom domain without topics warns', () => {
+  // `custom` ships no topics — without NEWS_TOPICS the keyword engines run
+  // match-all. The run continues (trending-style), but the audit trail says so.
+  it('logs custom_no_topics on a topic-less custom headlines run', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('no network');
+      }),
+    );
+    try {
+      const stmt = {
+        bind: (..._a: unknown[]) => stmt,
+        first: async () => null,
+        all: async () => ({ results: [] }),
+        run: async () => ({ meta: {} }),
+      };
+      const env = {
+        DB: { prepare: (_s: string) => stmt } as unknown as D1Database,
+        TIMEZONE: 'Asia/Baghdad',
+        NEWS_TARGET_CHAT_ID: '-1001',
+        NEWS_DOMAIN: 'custom',
+      } as unknown as Env;
+      const calls: { event: string; fields?: object }[] = [];
+      const logger = {
+        debug: async (e: string, f?: object) => calls.push({ event: e, fields: f }),
+        info: async (e: string, f?: object) => calls.push({ event: e, fields: f }),
+        warn: async (e: string, f?: object) => calls.push({ event: e, fields: f }),
+        error: async (e: string, f?: object) => calls.push({ event: e, fields: f }),
+      } as unknown as AuditLogger;
+      const cfg = resolveDigestConfig(env);
+      expect(cfg.topics).toEqual([]);
+      await runDigest(env, cfg, 'daily', logger, slotForTag('headlines'));
+      const warn = calls.find((c) => c.event === 'news_warning');
+      expect(warn?.fields).toMatchObject({ reason: 'custom_no_topics' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
