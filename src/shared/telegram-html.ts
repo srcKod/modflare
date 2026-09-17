@@ -116,3 +116,28 @@ export function renderedLength(html: string): number {
   return html.replace(/<[^>]*>/g, '').length;
 }
 
+/**
+ * Normalize blank-line separation between blocks (digest posts): every
+ * junction becomes exactly one empty line, leading/trailing blanks go.
+ * Models are inconsistent here (some emit `\n`, some `\n\n`, some `\r\n`
+ * between items) and the channel post inherits whatever the model did —
+ * this makes the spacing deterministic regardless of model or domain.
+ * Applied to LLM output only (pipeline path), never to hand-edited drafts.
+ */
+export function normalizeBreaks(body: string): string {
+  const lines = body
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((l) => l.replace(/[ \t]+$/g, ''));
+  // Drop leading/trailing blanks, drop every interior blank, re-join with
+  // exactly one empty line per junction.
+  let start = 0;
+  while (start < lines.length && lines[start] === '') start++;
+  let end = lines.length;
+  while (end > start && lines[end - 1] === '') end--;
+  return lines
+    .slice(start, end)
+    .filter((l) => l !== '')
+    .join('\n\n');
+}
+

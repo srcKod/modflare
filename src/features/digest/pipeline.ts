@@ -18,7 +18,7 @@ import {
 } from '../../core/telegram';
 import type { SendResult } from '../../core/telegram';
 import type { Env, TelegramUpdate } from '../../core/types';
-import { sanitizeTelegramHtml } from '../../shared/telegram-html';
+import { sanitizeTelegramHtml, normalizeBreaks } from '../../shared/telegram-html';
 import {
   gatherSourcesDetailed,
   extractArticleText,
@@ -69,6 +69,7 @@ export function buildDailyPrompt(cfg: DigestConfig, candidates: DigestCandidate[
     `- First line: 📰 <b>a headline for today's digest</b>`,
     `- Then for each selected item, one block: • <b>item title</b> — a 1-2 sentence factual, professional summary (no hype, no invented facts), with the source appended INLINE at the end of the same line in italic: <a href="s{n}"><i>{source}</i></a> where {n} is that item's candidate number and {source} is its source name. Never put the source on a separate line.`,
     `- End with a line: — · {n} sources`,
+    `Separate the title line, each item block, and the closing line with exactly one blank line.`,
     `Write ONLY in ${langHint(cfg)}; candidates may be in English, Chinese, or Arabic — always output in ${langHint(cfg)}.`,
     `Use only these Telegram HTML tags: <b> <i> <u> <s> <a href="s{n}"> <code> <blockquote>. Escape & < > in visible text.`,
     `Hard cap: 3500 characters. Never add items that are not in the candidate list.`,
@@ -107,6 +108,7 @@ export function buildDeepPrompt(cfg: DigestConfig, items: DigestCandidate[]): st
     `- First line: 🔍 <b>a deep-dive headline for today's digest</b>`,
     `- Then for each significant item: • <b>item title</b> — 3-5 sentences of professional analysis: what happened, why it matters now, and concrete implications. Append the source INLINE at the end of the same line in italic: <a href="s{n}"><i>{source}</i></a> where {n} is that item's number and {source} is its source name. Never put the source on a separate line.`,
     `- End with one short synthesis paragraph (2-4 sentences): the common thread across today's items — no new items.`,
+    `Separate the headline, each item, and the synthesis with exactly one blank line.`,
     `Write ONLY in ${langHint(cfg)}; items may be in English, Chinese, or Arabic — always output in ${langHint(cfg)}.`,
     `Use only these Telegram HTML tags: <b> <i> <u> <s> <a href="s{n}"> <code> <blockquote>. Escape & < > in visible text.`,
     `Hard cap: 5000 characters. Never add items that are not in the list. If an item has no snippet, analyze from the title only — never fabricate details.`,
@@ -143,6 +145,7 @@ function buildHistoryPrompt(
     `- First line: ${type === 'weekly' ? '🗓' : '📆'} <b>${period} roundup headline</b>`,
     `- Themes as short <b>theme</b> lines with 1-line items (title, then the source appended inline in italic: <a href="s{n}"><i>{source}</i></a> where {n} is the item's number)`,
     `- End with: — · top pick: <the biggest story title>`,
+    `Separate the headline, each theme line, and the closing line with exactly one blank line.`,
     `Use only tags <b> <i> <a href="s{n}"> <blockquote>. Hard cap 3500 characters.`,
     `IMPORTANT: link hrefs MUST be exactly href="s{n}" — NEVER write full URLs anywhere in your response. The server replaces s{n} with the real URL.`,
     `Respond ONLY with JSON {"title","post","items":[{"n":1,"title":"..."}]}.`,
@@ -731,8 +734,10 @@ export async function runDigest(
   }
 
   // Sanitize + sponsor footer (appended post-sanitize, never LLM-generated).
-  // RTL marks last: every stored/rendered form of the body is consistent.
-  let body = applyRtlMarks(sanitizeTelegramHtml(parsed.post));
+  // Breaks normalized (models vary between \n and \n\n — the channel post
+  // must not inherit that), RTL marks last: every stored/rendered form of
+  // the body is consistent.
+  let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(parsed.post)));
   if (cfg.sponsorText) {
     const sponsor = cfg.sponsorText
       .replace(/&/g, '&amp;')
@@ -794,14 +799,23 @@ export async function runDigest(
       extra: { slot: slotKey, type, postId, title: parsed.title },
     });
     const target = env.NEWS_DRAFT_NOTIFY_CHAT_ID?.trim() || null;
-    const noticeText = `📝 <b>Digest draft ready for review</b>\nSlot: <code>${slotKey}</code>\n${parsed.title}`;
+    // Admin notice: slot + what ran + what came out + where to review. The
+    // fallback DM path renders HTML too (notifyAdmins without a parse mode
+    // shows raw tags — the exact bug this text once shipped with).
+    const noticeText = [
+      `📝 <b>Digest draft ready for review</b>`,
+      `Slot: <code>${slotKey}</code> · ${type} · ${cfg.effectiveDomain}`,
+      `Items: ${parsed.items.length} · <code>${cfg.llm.model}</code>`,
+      `${parsed.title}`,
+      `Review it in the admin panel → Digest tab.`,
+    ].join('\n');
     if (target) {
       await sendMessageDetailed(env, target, noticeText, {
         parseMode: 'HTML',
         disablePreview: true,
       });
     } else {
-      await notifyAdmins(env, noticeText);
+      await notifyAdmins(env, noticeText, 'HTML');
     }
     return;
   }
@@ -843,6 +857,7 @@ export async function runDigest(
     await notifyAdmins(
       env,
       `⚠️ Digest publish FAILED for slot <code>${slotKey}</code>: ${sent.description ?? 'unknown'}`,
+      'HTML',
     );
   }
 }

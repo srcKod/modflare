@@ -353,11 +353,13 @@ export async function getChatMemberCount(
 /**
  * DM every numeric id in ADMIN_USER_IDS. Bots can only reach users who have
  * started the bot, so failures are expected and returned (not thrown) —
- * the caller logs them at debug level.
+ * the caller logs them at debug level. Pass 'HTML' when the text carries
+ * markup (without a parse mode Telegram shows the tags literally).
  */
 export async function notifyAdmins(
   env: Env,
   text: string,
+  parseMode?: 'HTML',
 ): Promise<{ sent: number; failed: number }> {
   const ids = (env.ADMIN_USER_IDS ?? '')
     .split(/[,\s]+/)
@@ -368,6 +370,7 @@ export async function notifyAdmins(
   for (const id of ids) {
     const r = await sendMessageDetailed(env, id, text, {
       disablePreview: true,
+      parseMode,
     });
     if (r.ok) sent++;
     else failed++;
