@@ -261,9 +261,13 @@ async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Pr
   const fields =
     'title,year,abstract,authors,citationCount,influentialCitationCount,url,externalIds,publicationDate,venue';
   const query = q.topics.join(' OR ');
+  // Recency bound: relevance-ranked search otherwise surfaces all-time famous
+  // papers (wrong for a news slot). S2 accepts an explicit year range.
+  const thisYear = new Date().getUTCFullYear();
   const url =
     'https://api.semanticscholar.org/graph/v1/paper/search' +
-    `?query=${encodeURIComponent(query)}&limit=8&fields=${encodeURIComponent(fields)}`;
+    `?query=${encodeURIComponent(query)}&limit=8&fields=${encodeURIComponent(fields)}` +
+    `&year=${thisYear - 1}-${thisYear}`;
   let res = await fetchWithTimeout(url, {}, 15_000);
   if (res.status === 429) {
     // Public tier is rate-limited; one polite retry before giving up.

@@ -14,6 +14,7 @@ import { sendMessageDetailed } from '../../core/telegram';
 import { sanitizeTelegramHtml } from '../../shared/telegram-html';
 import {
   resolveDigestConfig,
+  resolveDigestEnabled,
   parseReactionSignals,
   isRotationDomain,
   parseSchedule,
@@ -23,7 +24,7 @@ import {
   effectiveSchedule,
 } from './config';
 import type { SlotTag } from './config';
-import { runDigestFromHour, localParts } from './pipeline';
+import { runDigestFromHour, localParts, resolveDigestType, computeSlotKey, applyRtlMarks } from './pipeline';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
 
@@ -73,6 +74,12 @@ interface DigestListRow {
 
 async function handleDigestList(env: Env): Promise<Response> {
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
+  // Header toggles resolve through the same layer as the gate/pipeline —
+  // env-only values went stale the moment Settings shadowed them
+  // (review 1, P1-6). autoPublish comes from the resolved config (single
+  // source with the pipeline); enabled shares the gate's helper.
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
   try {
     const rows = await env.DB.prepare(
       `SELECT id, slot_key, type, run_at, mode, domain, target_chat_id, title,
@@ -81,8 +88,8 @@ async function handleDigestList(env: Env): Promise<Response> {
        FROM digest_posts ORDER BY run_at DESC LIMIT 50`,
     ).all<DigestListRow>();
     return json({
-      auto_publish: (env.NEWS_AUTO_PUBLISH || '').trim().toLowerCase() === 'true',
-      enabled: (env.ENABLE_NEWS_DIGEST || '').trim().toLowerCase() === 'true',
+      auto_publish: cfg.autoPublish,
+      enabled: resolveDigestEnabled(env, overrides),
       rows: rows.results ?? [],
     });
   } catch (err) {
@@ -105,13 +112,14 @@ async function handleDigestOne(env: Env, id: number): Promise<Response> {
 }
 
 /**
- * Draft actions: save (persist edits), publish (sanitize + send), discard.
- * Only drafts are mutable — a published/discarded/failed row is final here.
+ * Draft actions: save (persist edits), publish (sanitize + send), discard,
+ * retry (re-send a failed row's body — no LLM, same send contract).
+ * Drafts are mutable; failed rows accept only retry; anything else is final.
  */
 async function handleDigestAction(
   env: Env,
   id: number,
-  action: 'save' | 'publish' | 'discard',
+  action: 'save' | 'publish' | 'discard' | 'retry',
   request: Request,
 ): Promise<Response> {
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
@@ -132,8 +140,15 @@ async function handleDigestAction(
       body_original: string | null;
     }>();
   if (!row) return json({ error: 'Not found' }, 404);
-  if (row.status !== 'draft') {
+  // Status gate per action: save/publish/discard need a draft; retry needs a
+  // failed row (plan §11.4's regenerate promise for failed sends). Anything
+  // else is final.
+  const needDraft = action === 'save' || action === 'publish' || action === 'discard';
+  if (needDraft && row.status !== 'draft') {
     return json({ error: `Row is ${row.status}; only drafts are mutable` }, 409);
+  }
+  if (action === 'retry' && row.status !== 'failed') {
+    return json({ error: `Row is ${row.status}; only failed rows can retry` }, 409);
   }
 
   if (action === 'save') {
@@ -168,18 +183,27 @@ async function handleDigestAction(
     return json({ ok: true, action: 'discard' });
   }
 
-  // publish
+  // publish + retry share one send contract (retry re-sends a failed row's
+  // stored body — no LLM involved). The status gate above is what keeps them
+  // apart: publish needs a draft, retry needs a failed row.
+  // Contract mirrors the pipeline (sanitize → RTL marks → sponsor append) so
+  // manual sends render like auto-publishes (review 1, P1-5). Cap stays wider
+  // than the pipeline's 3900 (edited drafts run longer; chunked send copes);
+  // sponsor resolves override-aware, not env-only.
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
+  const sponsorRaw = (cfg.sponsorText ?? '').trim();
   let sponsorSuffix = '';
-  if (env.NEWS_SPONSOR_TEXT?.trim()) {
+  if (sponsorRaw) {
     sponsorSuffix =
       '\n\n<i>' +
-      env.NEWS_SPONSOR_TEXT.trim()
+      sponsorRaw
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;') +
       '</i>';
   }
-  const clean = sanitizeTelegramHtml(row.body, 7900) + sponsorSuffix;
+  const clean = applyRtlMarks(sanitizeTelegramHtml(row.body, 7900)) + sponsorSuffix;
   const sent = await sendMessageDetailed(
     env,
     /^\d+$/.test(row.target_chat_id) ? Number(row.target_chat_id) : row.target_chat_id,
@@ -202,17 +226,17 @@ async function handleDigestAction(
     await logger.info('news_published', {
       chat_id: Number(row.target_chat_id) || null,
       decision: 'publish',
-      reason: 'admin_publish',
+      reason: action === 'retry' ? 'admin_retry' : 'admin_publish',
       extra: { postId: id, slot: row.slot_key, messageId: sent.messageId },
     });
-    return json({ ok: true, action: 'publish', message_id: sent.messageId });
+    return json({ ok: true, action, message_id: sent.messageId });
   }
   await env.DB.prepare(`UPDATE digest_posts SET status='failed', error=? WHERE id=?`)
     .bind(sent.description ?? 'send_failed', id)
     .run();
   await logger.error('news_error', {
     chat_id: Number(row.target_chat_id) || null,
-    reason: `admin_publish_failed: ${sent.description ?? ''}`,
+    reason: `admin_${action}_failed: ${sent.description ?? ''}`,
     extra: { postId: id, slot: row.slot_key },
   });
   return json({ ok: false, error: sent.description ?? 'send_failed' }, 502);
@@ -253,6 +277,30 @@ async function handleDigestSeed(
       ? tag
       : undefined;
   const effectiveTag: SlotTag = validTag ?? (schedule[hour]?.tag as SlotTag | undefined) ?? 'headlines';
+
+  // Honest no-op signal: the seed writes the real cron slot key, so seeding
+  // an already-run slot would silently do nothing — say so instead of a
+  // misleading ok:true.
+  const lpSeed = { ...localParts(env.TIMEZONE), hour };
+  const seedType = resolveDigestType(env, cfg, lpSeed, overrides)?.type ?? 'daily';
+  const seedKey = computeSlotKey(seedType, lpSeed, effectiveTag);
+  const existing = await env.DB.prepare(
+    `SELECT status FROM digest_posts WHERE slot_key = ? AND target_chat_id = ?`,
+  )
+    .bind(seedKey, cfg.targetChatId)
+    .first<{ status: string }>();
+  if (existing) {
+    return json(
+      {
+        ok: false,
+        error: `slot ${seedKey} already ${existing.status} — seed would no-op`,
+        slot_key: seedKey,
+        tag: effectiveTag,
+        hour,
+      },
+      409,
+    );
+  }
 
   try {
     const { slotKey } = await runDigestFromHour(env, hour, effectiveTag);

@@ -518,14 +518,18 @@ async function loadDigest(){
     else if(d.auto_publish){warnNotice('Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.');}
     else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
     const drafts=(d.rows||[]).filter(x=>x.status==='draft');
+    // Failed runs surface alongside drafts with a Retry action (re-send the
+    // stored body, no LLM) — otherwise a failed send is invisible and final.
+    const failed=(d.rows||[]).filter(x=>x.status==='failed');
+    const actionable=[...drafts,...failed];
     const f=dgFilterParams();
     const fDomain=f.get('domain'),fType=f.get('type');
-    const shownDrafts=drafts.filter(x=>
+    const shownDrafts=actionable.filter(x=>
       (!fDomain||(x.domain||'')===fDomain)&&(!fType||x.type===fType));
     const tbody=document.getElementById('dg-drafts');
     if(!shownDrafts.length){
       tbody.innerHTML='<tr class="empty"><td colspan="8">'+
-        (drafts.length?'No drafts match the filters.':'No pending drafts.')+'</td></tr>';
+        (actionable.length?'No rows match the filters.':'No pending drafts.')+'</td></tr>';
     }else{
       tbody.innerHTML=shownDrafts.map(row=>'<tr>'+
         '<td class="mono">'+esc(row.slot_key)+'</td>'+
@@ -535,9 +539,19 @@ async function loadDigest(){
         '<td><div class="reason">'+renderTgHtml(row.preview||'')+'</div></td>'+
         '<td class="mono">'+esc((row.run_at||'').replace('T',' ').replace('Z',''))+'</td>'+
         '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
-        '<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>'+
+        (row.status==='failed'
+          ?'<td><button type="button" class="details-btn" data-dg-retry="'+row.id+'">Retry</button></td>'
+          :'<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>')+
       '</tr>').join('');
       tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));
+      tbody.querySelectorAll('[data-dg-retry]').forEach(b=>b.addEventListener('click',async()=>{
+        const id=Number(b.getAttribute('data-dg-retry'));
+        if(!window.confirm('Re-send failed digest #'+id+' to the channel?'))return;
+        const r=await dgPost('/api/digest/drafts/'+id+'/retry');
+        const dd=await r.json().catch(()=>({}));
+        dgToast(r.ok?'Re-sent ✓ (message '+dd.message_id+')':'Retry failed: '+(dd.error||r.status),r.ok?'ok':'warn');
+        loadDigest();
+      }));
     }
     // Published (filtered + paginated) via /api/digest/stats
     const sp=new URLSearchParams(f);sp.set('page',dgPage);sp.set('per_page',DG_PER_PAGE);

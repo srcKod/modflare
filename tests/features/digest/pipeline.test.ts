@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { computeSlotKey } from '../../../src/features/digest/pipeline';
+import {
+  computeSlotKey,
+  resolveDigestType,
+} from '../../../src/features/digest/pipeline';
 
 describe('computeSlotKey', () => {
   it('builds a daily key from date + hour', () => {
@@ -46,5 +49,57 @@ describe('runDigestFromHour slot-key shape', () => {
     // lp.hour is what runDigestFromHour overrides localParts with.
     expect(computeSlotKey('daily', { date: '2026-09-15', hour: 21 }, 'trending'))
       .toBe('2026-09-15T21:trending');
+  });
+});
+
+describe('resolveDigestType', () => {
+  // Review 1, P0-1: an hour that owns no slot must resolve to null (silent
+  // gate no-op) — never to an untagged full digest. The old fallthrough
+  // published around the clock (9 channel posts vs 4 scheduled, 2026-09-16).
+  const schedEnv = {
+    NEWS_SCHEDULE: '9:headlines,12:trending,14:papers,21:deep',
+  } as never;
+  const plainCfg = {
+    monthlyEnabled: false,
+    weeklyEnabled: false,
+    monthlyDay: 1,
+    weeklyDay: 0,
+  };
+  const lp = (hour: number, weekday = 2, day = 16) => ({
+    date: '2026-09-16',
+    hour,
+    weekday,
+    day,
+  });
+
+  it('returns the scheduled slot for a scheduled hour', () => {
+    const r = resolveDigestType(schedEnv, plainCfg as never, lp(9));
+    expect(r?.type).toBe('daily');
+    expect(r?.slot?.tag).toBe('headlines');
+  });
+
+  it('returns null for an off-schedule hour', () => {
+    expect(resolveDigestType(schedEnv, plainCfg as never, lp(10))).toBeNull();
+    expect(resolveDigestType(schedEnv, plainCfg as never, lp(22))).toBeNull();
+  });
+
+  it('returns null when no schedule is set', () => {
+    expect(resolveDigestType({} as never, plainCfg as never, lp(9))).toBeNull();
+  });
+
+  it('weekly wins over the intraday slot at the rollup hour', () => {
+    const cfg = { ...plainCfg, weeklyEnabled: true, weeklyDay: 2 } as never;
+    expect(resolveDigestType(schedEnv, cfg, lp(9))).toEqual({ type: 'weekly' });
+  });
+
+  it('monthly wins over weekly', () => {
+    const cfg = {
+      ...plainCfg,
+      monthlyEnabled: true,
+      monthlyDay: 16,
+      weeklyEnabled: true,
+      weeklyDay: 2,
+    } as never;
+    expect(resolveDigestType(schedEnv, cfg, lp(9))).toEqual({ type: 'monthly' });
   });
 });

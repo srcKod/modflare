@@ -27,6 +27,11 @@ describe('parseDraftsPath (route intent parsing)', () => {
       id: 7,
       action: 'discard',
     });
+    expect(parseDraftsPath('/api/digest/drafts/9/retry')).toEqual({
+      kind: 'action',
+      id: 9,
+      action: 'retry',
+    });
   });
 
   it('rejects non-numeric ids and unknown suffixes as unknown', () => {

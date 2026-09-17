@@ -136,6 +136,10 @@ describe('engineSemanticScholar (s2)', () => {
     expect(url.searchParams.get('limit')).toBe('8');
     expect(url.searchParams.get('fields')).toContain('citationCount');
     expect(url.searchParams.get('fields')).toContain('externalIds');
+    // Recency bound (review 1, P1-10): unfiltered relevance search surfaces
+    // all-time famous papers — a news slot needs a year window.
+    const y = new Date().getUTCFullYear();
+    expect(url.searchParams.get('year')).toBe(`${y - 1}-${y}`);
   });
 
   it('skips the engine (no fetch) when there are no topics', async () => {

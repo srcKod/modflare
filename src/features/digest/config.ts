@@ -4,6 +4,7 @@
  */
 
 import { envList } from '../../core/config';
+import { resolveSetting, settingBool } from '../../core/settings';
 
 export type DigestMode = 'news' | 'papers' | 'both';
 export type DigestContentType = 'daily' | 'weekly' | 'monthly';
@@ -316,6 +317,22 @@ export interface DigestConfig {
  *  generic; slots carry explicit budgets via SlotConfig.maxTokens). */
 export const DIGEST_DEFAULT_MAX_TOKENS = 3000;
 
+/**
+ * Digest master switch (runtime settings → env → default off). Single source
+ * for the cron gate and the panel header — a second inline copy is how the
+ * header went stale once (review 1, P1-6).
+ */
+export function resolveDigestEnabled(
+  env: Env,
+  overrides: Record<string, string>,
+): boolean {
+  const envFlag = (env.ENABLE_NEWS_DIGEST ?? '').trim().toLowerCase();
+  return settingBool(
+    resolveSetting(env, overrides, 'digest_enabled'),
+    envFlag === 'true' || envFlag === '1',
+  );
+}
+
 
 export function resolveDigestConfig(
   env: Env,
@@ -442,10 +459,10 @@ export function isSeedEnabled(seed: string | boolean | undefined): boolean {
 export type DraftsIntent =
   | { kind: 'list' }
   | { kind: 'one'; id: number }
-  | { kind: 'action'; id: number; action: 'save' | 'publish' | 'discard' }
+  | { kind: 'action'; id: number; action: 'save' | 'publish' | 'discard' | 'retry' }
   | { kind: 'unknown'; rest: string };
 
-const ACTION_RE = /^\/api\/digest\/drafts\/(\d+)\/(save|publish|discard)$/;
+const ACTION_RE = /^\/api\/digest\/drafts\/(\d+)\/(save|publish|discard|retry)$/;
 const ONE_RE = /^\/api\/digest\/drafts\/(\d+)$/;
 
 export function parseDraftsPath(rest: string): DraftsIntent {

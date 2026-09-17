@@ -8,7 +8,7 @@
 import { envBool, envList } from '../../core/config';
 import { makeLogger } from '../../core/logger';
 import type { AuditLogger } from '../../core/logger';
-import { loadSettingOverrides, resolveSetting, settingBool } from '../../core/settings';
+import { loadSettingOverrides } from '../../core/settings';
 import { chatCompletion } from '../../core/llm';
 import { fetchWithTimeout } from '../../core/fetch';
 import {
@@ -31,6 +31,7 @@ import {
 import type { DigestCandidate } from '../../shared/sources';
 import {
   resolveDigestConfig,
+  resolveDigestEnabled,
   isRotationDomain,
   ROTATION_PRESETS,
   parseSchedule,
@@ -378,7 +379,7 @@ async function loadHistory(
  */
 const RTL_CHAR_RE = /[\u0591-\u07FF\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 
-function applyRtlMarks(body: string): string {
+export function applyRtlMarks(body: string): string {
   return body
     .split('\n')
     .map((line) => (RTL_CHAR_RE.test(line) ? '\u200F' + line : line))
@@ -473,7 +474,7 @@ async function loadDeepSource(
   }));
 }
 
-async function runDigest(
+export async function runDigest(
   env: Env,
   cfg: DigestConfig,
   type: DigestContentType,
@@ -481,6 +482,13 @@ async function runDigest(
   /** Intraday slot override — replaces the engines/mode for this run and
    *  tags the slot key so same-day slots don't collide. */
   slot?: SlotConfig,
+  /** Runtime settings overrides (D1) — must survive the rotation rebuild
+   *  below (review 1, P1-4: the rebuild silently fell back to env). */
+  overrides: Record<string, string> = {},
+  /** Dev-seed forces draft mode regardless of NEWS_AUTO_PUBLISH — applied
+   *  AFTER the rotation rebuild so the rebuild can't clobber it (a seed
+   *  must never publish to the channel; review 1, P0-2). */
+  forceDraft = false,
 ): Promise<void> {
   const db = env.DB;
   if (!db || !cfg.targetChatId) {
@@ -503,9 +511,10 @@ async function runDigest(
   // slot engine/mode override afterwards since resolveDigestConfig rebuilds them.
   if (cfg.rotation) {
     const picked = await resolveSlotDomain(env, db, slotKey);
-    cfg = resolveDigestConfig(env, picked);
+    cfg = resolveDigestConfig(env, picked, overrides);
     if (slot) cfg = applySlotOverride(cfg, slot);
   }
+  if (forceDraft) cfg = { ...cfg, autoPublish: false };
 
   // Idempotency: same slot + chat already attempted → no-op.
   const existing = await findSlotRow(db, slotKey, cfg.targetChatId);
@@ -539,26 +548,33 @@ async function runDigest(
         cfg.targetChatId,
         type === 'weekly' ? 7 : 30,
       );
+      if (rows.length < 3) {
+        // Too little history for a real roundup — skip instead of gathering
+        // fresh sources into a post mislabeled as a rollup (review 1, P1-7).
+        await logger.info('news_skipped', {
+          chat_id: Number(cfg.targetChatId),
+          decision: 'skip',
+          reason: 'history_too_short',
+          extra: { slot: slotKey, type, rows: rows.length },
+        });
+        return;
+      }
       historyCandidates = rows.map((r) => ({
         tag: 'headlines' as const,
         title: r.title,
         url: r.url,
         source: r.source,
       }));
-      if (rows.length >= 3) {
-        prompt = buildHistoryPrompt(
-          cfg,
-          type,
-          rows.map((r) => ({
-            title: r.title,
-            url: r.url,
-            source: r.source,
-            reactions: r.reactions,
-          })),
-        );
-      } else {
-        historyCandidates = [];
-      }
+      prompt = buildHistoryPrompt(
+        cfg,
+        type,
+        rows.map((r) => ({
+          title: r.title,
+          url: r.url,
+          source: r.source,
+          reactions: r.reactions,
+        })),
+      );
     }
     if (slot?.tag === 'deep') {
       // Deep-dive slot: analyze today's already-published items from the D1
@@ -802,13 +818,16 @@ async function runDigest(
  *
  * Priority when several types match (avoids triple-posting):
  *   monthly > weekly > intraday schedule.
+ * Returns null when the hour owns no slot — the gate treats that as a silent
+ * no-op (an unscheduled hour must NEVER run a full digest; the old fallthrough
+ * published untagged digests around the clock — review 1, P0-1).
  */
-function resolveDigestType(
+export function resolveDigestType(
   env: Env,
   cfg: DigestConfig,
   lp: { date: string; hour: number; weekday: number; day: number },
   overrides: Record<string, string> = {},
-): { type: DigestContentType; slot?: SlotConfig } {
+): { type: DigestContentType; slot?: SlotConfig } | null {
   const schedule = parseSchedule(effectiveSchedule(env, overrides));
   // Weekly/monthly rollups fire at the earliest scheduled hour (morning
   // roundup) — replaces the removed NEWS_PUBLISH_HOURS.
@@ -830,7 +849,7 @@ function resolveDigestType(
   }
   const scheduled = schedule[lp.hour];
   if (scheduled) return { type: 'daily', slot: scheduled };
-  return { type: 'daily' };
+  return null;
 }
 
 /**
@@ -846,11 +865,7 @@ export async function runDigestGate(env: Env): Promise<void> {
   // Fail-open: a D1 hiccup in loadSettingOverrides returns {} and the env var
   // still applies, so the gate can't be wedged by the settings layer.
   const overrides = await loadSettingOverrides(env.DB);
-  const enabled =
-    settingBool(
-      resolveSetting(env, overrides, 'digest_enabled'),
-      env.ENABLE_NEWS_DIGEST === 'true' || env.ENABLE_NEWS_DIGEST === '1',
-    );
+  const enabled = resolveDigestEnabled(env, overrides);
   if (!enabled) return;
   const logger = makeLoggerFor(env);
   const cfg = resolveDigestConfig(env, undefined, overrides);
@@ -866,15 +881,20 @@ export async function runDigestGate(env: Env): Promise<void> {
     return;
   }
 
-  const { type, slot } = resolveDigestType(env, cfg, lp, overrides);
+  const resolved = resolveDigestType(env, cfg, lp, overrides);
+  if (!resolved) {
+    // Off-schedule hour: silent no-op (an hourly cron means ~20 quiet ticks
+    // a day — deliberately unlogged, like the not-due path before it).
+    return;
+  }
 
   try {
-    await runDigest(env, cfg, type, logger, slot);
+    await runDigest(env, cfg, resolved.type, logger, resolved.slot, overrides);
   } catch (err) {
     await logger.error('news_error', {
       chat_id: Number(cfg.targetChatId) || null,
       reason: `gate:${String(err).slice(0, 300)}`,
-      extra: { type, slot: slot?.tag },
+      extra: { type: resolved.type, slot: resolved.slot?.tag },
     });
   }
 }
@@ -896,10 +916,12 @@ export async function runDigestFromHour(
   const cfg = resolveDigestConfig(env, undefined, overrides);
   const lp = { ...localParts(env.TIMEZONE), hour };
   // Force the chosen tag onto the resolved type (a tag that isn't in
-  // NEWS_SCHEDULE still runs — the dev override is the point).
+  // NEWS_SCHEDULE still runs — the dev override is the point). An
+  // off-schedule hour resolves to null here; the seed still runs as a daily
+  // slot since the tag override is the whole point of the call.
   const slot = slotForTag(tag);
-  const { type } = resolveDigestType(env, cfg, lp, overrides);
-  await runDigest(env, cfg, type, logger, slot);
+  const { type } = resolveDigestType(env, cfg, lp, overrides) ?? { type: 'daily' as const };
+  await runDigest(env, cfg, type, logger, slot, overrides, true);
   return { slotKey: computeSlotKey(type, lp, tag) };
 }
 
@@ -994,6 +1016,26 @@ export async function pruneDigests(env: Env): Promise<void> {
       )
       .bind(draftCutoff)
       .run();
+    // Orphaned registry rows first: items of posts about to disappear that
+    // never published (draft/discarded/failed) would otherwise burn those
+    // URLs in the cross-run dedupe forever + grow the table without bound
+    // (review 1, P1-9). Published items stay — they ARE the dedupe memory.
+    const doomed = await env.DB.prepare(
+      `SELECT id FROM digest_posts
+       WHERE status IN ('failed','discarded') AND run_at < ?`,
+    )
+      .bind(rowCutoff)
+      .all<{ id: number }>();
+    const doomedIds = (doomed.results ?? []).map((r) => r.id);
+    if (doomedIds.length) {
+      const placeholders = doomedIds.map(() => '?').join(',');
+      await env.DB.prepare(
+        `DELETE FROM digest_items
+         WHERE published_at IS NULL AND digest_post_id IN (${placeholders})`,
+      )
+        .bind(...doomedIds)
+        .run();
+    }
     await env.DB.prepare(
       `DELETE FROM digest_posts WHERE status IN ('failed','discarded') AND run_at < ?`,
     )
