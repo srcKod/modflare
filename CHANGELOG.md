@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source), `POST /api/settings` (validated upsert), `POST /api/settings/reset`
   (delete override). Writes are CSRF-checked; unlisted keys are rejected.
 
+### Fixed
+
+- Audit table `error`-level badge rendered as a bloated blob: the generic
+  page-error rule (`.error`, 20px padding) overrode the pill badge. Renamed
+  the row rule to `.row-error`; level badges (`info`, `debug`, `warn`,
+  `error`, …) all render as pills now.
+
 ### Deployment notes
 
 - Apply migration `0007_app_settings.sql` after deploying
