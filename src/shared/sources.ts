@@ -44,6 +44,7 @@ export interface SourceQuery {
   exaKey?: string;
   jinaKey?: string;
   llamaKey?: string;
+  s2Key?: string;
 }
 
 
@@ -277,6 +278,11 @@ async function engineHfPapers(out: DigestCandidate[]): Promise<boolean> {
 
 async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
   if (!q.topics.length) return true;
+  // Public Graph API — works keyless until throttled (429/403 without a
+  // key is routine on shared egress). S2_API_KEY lifts the anonymous limits
+  // via x-api-key; absence only loses the header, never the attempt.
+  const headers: Record<string, string> = {};
+  if (q.s2Key) headers['x-api-key'] = q.s2Key;
   // Public Graph API — no key required. Docs:
   // https://api.semanticscholar.org/api-docs/graph#tag/Paper-Data/operation/get_graph_get_paper_search
   const fields =
@@ -289,11 +295,11 @@ async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Pr
     'https://api.semanticscholar.org/graph/v1/paper/search' +
     `?query=${encodeURIComponent(query)}&limit=8&fields=${encodeURIComponent(fields)}` +
     `&year=${thisYear - 1}-${thisYear}`;
-  let res = await fetchWithTimeout(url, {}, 15_000);
+  let res = await fetchWithTimeout(url, { headers }, 15_000);
   if (res.status === 429) {
     // Public tier is rate-limited; one polite retry before giving up.
     await new Promise((r) => setTimeout(r, 4000));
-    res = await fetchWithTimeout(url, {}, 15_000);
+    res = await fetchWithTimeout(url, { headers }, 15_000);
   }
   if (!res.ok) return false;
   const json = (await res.json().catch(() => null)) as {
@@ -469,6 +475,51 @@ export interface GatherReport {
   candidates: DigestCandidate[];
   /** Engine names whose backend call failed (key-gated skips don't count). */
   failures: string[];
+}
+
+/**
+ * What a failed engine most likely means and what to do — surfaced in the
+ * audit Details panel so a warning is actionable, not just a code.
+ */
+export const ENGINE_HINTS: Record<string, string> = {
+  gnews:
+    'Google throttles shared worker-egress IPs or the 10s fetch timed out; ' +
+    'usually transient (one automatic retry already ran). If it persists ' +
+    'across days, raise the fetch timeout or lean on hn/rss.',
+  hn: 'Algolia unreachable or slow; usually transient.',
+  rss: 'Feed unreachable, oversized, or bot-blocking (403); check the feed ' +
+    'URL in NEWS_RSS_FEEDS, or drop it from the preset.',
+  tavily: 'Key, quota (1,000 credits/mo free), or API change — check the key ' +
+    'and usage at tavily.com.',
+  exa: 'Key, credits ($20 signup + $10/mo free), or API change — check the key.',
+  jsearch: 'Key or shared 10M-token pool exhausted (~10K tokens per call) — ' +
+    'check Jina usage; each call costs pool whether or not it succeeds.',
+  arxiv: 'Aggressive per-IP throttling (shared egress); one 15s-backoff ' +
+    'retry already ran. Persistent 429s mean arXiv is limiting us.',
+  hf: 'Hugging Face API unreachable or changed shape.',
+  s2: 'Public tier throttled or keyless blocked (403 observed) — consider a ' +
+    'free Semantic Scholar API key, or accept papers from arxiv+hf.',
+};
+
+/** Fallback hint for engines without a specific entry. */
+const DEFAULT_ENGINE_HINT =
+  'Backend unreachable; usually transient. Persistent failures need a look.';
+
+/**
+ * Human summary + hints for a failed-engine set. Pure (unit-tested) so the
+ * audit row explains itself: which backends died and what each likely means.
+ */
+export function describeEngineFailures(failures: string[]): {
+  reason: string;
+  hint: string;
+} {
+  const names = failures.join(', ');
+  return {
+    reason: `engines_failed: ${names} unreachable — digest built from the remaining engines`,
+    hint: failures
+      .map((f) => `${f}: ${ENGINE_HINTS[f] ?? DEFAULT_ENGINE_HINT}`)
+      .join(' '),
+  };
 }
 
 /** Run all configured engines; returns deduped, allowlist-filtered candidates. */

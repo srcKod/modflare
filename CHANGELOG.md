@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cross-feature admin API: `GET /api/settings` (defs + effective values +
   source), `POST /api/settings` (validated upsert), `POST /api/settings/reset`
   (delete override). Writes are CSRF-checked; unlisted keys are rejected.
+- Scheduled news digest: zero-key engines (Google News RSS incl. zh-CN,
+  Hacker News incl. Ask-thread fallback, publisher RSS, arXiv, Hugging Face
+  Papers, Semantic Scholar; Tavily/Exa/Jina Search when keyed) feed one LLM
+  call per intraday slot (`headlines` / `trending` / `papers` / D1-sourced
+  `deep`), posting Telegram-HTML digests to a channel on a `NEWS_SCHEDULE`
+  (`9:headlines,12:trending,14:papers,21:deep` style). Domain presets
+  (`tech` / `finance` / `science` / `health` / free-form `custom`) plus
+  round-robin/random rotation, weekly/monthly rollups, per-slot token
+  budgets, cross-run URL dedupe, and full-text archiving per item.
+- Digest review console: drafts with a Telegram-HTML editor (live preview,
+  save/restore/publish/discard, retry for failed sends), published history
+  with reaction analytics (totals, sentiment, velocity, trend) and
+  domain/type/slot/date filters, and live runtime settings (schedule,
+  domain, topics, language, auto-publish, sponsor footer) without redeploying.
 
 ### Changed
 
@@ -47,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`npx wrangler d1 migrations apply <db> --remote`). The code degrades
   gracefully (fail-open) if the table is missing, but the Settings tab will
   not persist overrides until the migration is applied.
+- Digest migrations `0007_digest_posts.sql`, `0008_digest_extracted_text.sql`,
+  `0009_digest_items_post_index.sql` ride the same command (all idempotent).
+- Digest Telegram setup: promote the bot in the target channel (Post
+  Messages), set `NEWS_TARGET_CHAT_ID`, and for reaction analytics
+  re-register the webhook with reaction updates
+  (`npm run set-webhook -- --reactions`).
 
 ## [1.0.0] — 2026-09-13
 

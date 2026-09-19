@@ -140,6 +140,7 @@ NEWS_DOMAIN = "tech"                # preset: tech | finance | science | health
 # NEWS_DOMAIN = "round-robin"
 NEWS_MODE = "both"                  # news | papers | both
 NEWS_TARGET_CHAT_ID = "-100XXXXXXXXXX"  # channel/group id; bot must be an admin there
+# NEWS_TARGET_CHAT_NAME = "My Channel"  # static display name for confirms/headers (unset = show the id)
 NEWS_LANGUAGE = "Arabic"
 NEWS_DIALECT = "Standard"           # optional dialect hint
 NEWS_AUTO_PUBLISH = "true"          # false = store drafts for review in the Digest tab
@@ -180,6 +181,9 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 #                         the shared 10M-token free pool (~1,000 searches total).
 #   LLAMAINDEX_APIKEY   — LlamaParse documents/PDF extraction (10K credits free,
 #                         Fast tier 1 credit/page). Only used for .pdf URLs.
+#   S2_API_KEY          — Semantic Scholar key (free on request,
+#                         semanticscholar.org/product/api#api-key-form). Lifts the
+#                         anonymous 429s; unset = keyless best-effort.
 # NEWS_RSS_FEEDS = "https://www.qbitai.com/feed"
 # NEWS_TOPICS = "artificial intelligence, developer tools"
 #   REQUIRED when NEWS_DOMAIN=custom: custom is the free-form domain — it

@@ -204,6 +204,17 @@ export const SETTING_DEFS: SettingDef[] = [
     group: 'digest',
   },
   {
+    key: 'digest_target_name',
+    label: 'Target chat display name',
+    description:
+      'Human name shown for the target channel/group in confirms and headers. ' +
+      'Empty = show the raw chat id. Shadows NEWS_TARGET_CHAT_NAME.',
+    kind: 'string',
+    envVar: 'NEWS_TARGET_CHAT_NAME',
+    default: '',
+    group: 'digest',
+  },
+  {
     key: 'digest_dev_seed',
     label: 'Digest dev-seed endpoint',
     description:

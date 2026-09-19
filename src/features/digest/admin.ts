@@ -93,7 +93,11 @@ async function handleDigestOne(env: Env, id: number): Promise<Response> {
     .bind(id)
     .first();
   if (!row) return json({ error: 'Not found' }, 404);
-  return json(row);
+  // Resolved display name for the target chat (static config, not a live
+  // lookup — a Bot API call per dialog-open is unjustified for a label).
+  const overrides = await loadSettingOverrides(env.DB);
+  const cfg = resolveDigestConfig(env, undefined, overrides);
+  return json({ ...row, target_name: cfg.targetChatName ?? null });
 }
 
 /**

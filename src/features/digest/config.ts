@@ -285,6 +285,8 @@ export interface DigestConfig {
   /** Cost guard: max candidates enriched with full-text per run. */
   extractMax: number;
   targetChatId: string;
+  /** Static display name for the target chat (confirms/headers). */
+  targetChatName?: string;
   weeklyEnabled: boolean;
   weeklyDay: number; // 0=Sunday
   monthlyEnabled: boolean;
@@ -308,6 +310,8 @@ export interface DigestConfig {
   exaKey?: string;
   jinaKey?: string;
   llamaKey?: string;
+  /** Semantic Scholar API key (secret) — lifts the anonymous rate limits. */
+  s2Key?: string;
   gnewsLocale: string;
   rssFeeds: string[];
 }
@@ -405,6 +409,7 @@ export function resolveDigestConfig(
     fetchFulltext: (ov('digest_fetch_fulltext', 'NEWS_FETCH_FULLTEXT') || '').trim() === 'true',
     extractMax: Math.max(1, Math.min(12, Number(env.NEWS_EXTRACT_MAX_PER_RUN) || 4)),
     targetChatId: (env.NEWS_TARGET_CHAT_ID || '').trim(),
+    targetChatName: ovTrim('digest_target_name', 'NEWS_TARGET_CHAT_NAME') || undefined,
     weeklyEnabled: (ov('digest_weekly', 'NEWS_ENABLE_WEEKLY') || '') === 'true',
     weeklyDay: Number(env.NEWS_WEEKLY_DAY ?? 0) || 0,
     monthlyEnabled: (ov('digest_monthly', 'NEWS_ENABLE_MONTHLY') || '') === 'true',
@@ -436,6 +441,7 @@ export function resolveDigestConfig(
     exaKey: env.EXA_API_KEY,
     jinaKey: env.JINA_API_KEY,
     llamaKey: env.LLAMAINDEX_APIKEY,
+    s2Key: env.S2_API_KEY,
     gnewsLocale: preset.gnewsLocale,
     rssFeeds: envList(env.NEWS_RSS_FEEDS).length
       ? envList(env.NEWS_RSS_FEEDS)

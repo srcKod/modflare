@@ -1,31 +1,41 @@
-# Telegram Moderation Bot (Cloudflare Worker)
+# Modflare — AI News Digest & Moderation Bot (Cloudflare Worker)
 
-A serverless Telegram bot that automatically moderates group messages **during
-a configurable "night hours" window** using **any OpenAI-compatible multimodal
-LLM**. When a message contains inappropriate media, suspicious links, or bad
-text, the bot deletes it from the group — so admins can sleep while the bot
-watches the chat.
+What does it cost to run an AI news channel and a moderated group chat?
+**Nothing — $0/month.** Modflare publishes a polished daily digest to your
+channel and watches your group for spam, all inside Cloudflare's free tier.
+A normal day (dozens of moderated messages, several digests) burns a low
+single-digit percent of the free allowance; even a busy day — hundreds of
+messages plus four digests — stays comfortably free. There is no bill to be
+surprised by: over-limit calls simply pause until the daily pool resets.
+The [numbers are measured and broken down below](#cost-efficiency).
 
 **Key features**
 
+- 📰 **Scheduled news digest** — intraday slots (`headlines` / `trending` /
+  `papers` / D1-sourced `deep`), zero-key engines (Google News incl. zh-CN,
+  Hacker News, publisher RSS, arXiv, Hugging Face, Semantic Scholar),
+  domain presets + rotation, draft-review console, reaction analytics.
 - 🚀 **Runs on Cloudflare Workers** — no server to manage, free tier available.
 - 🧠 **Any OpenAI-compatible LLM** — swap providers via environment variables
   only (OpenAI, OpenRouter, Groq, Cloudflare Workers AI, …​). No code changes.
-- ⏰ **Time-gated** — only active during your chosen window (e.g. 22:00–06:00),
-  saving LLM tokens all day.
+- ⏰ **Time-gated moderation** — only active during your chosen window (e.g.
+  22:00–06:00), saving LLM tokens all day.
 - 🎯 **Token-safer filtering** — process only messages that have media and/or
   links, not every plain-text message.
 - 🛡️ **Video policy** — Telegram-hosted videos from non-admins are deleted
   immediately during active hours, with no wasted LLM inference.
 - 😂 **Optional funny reply** (single LLM call) — a kind, harmless joke to the
   poster when something is removed.
-- 🔒 **Fail-open** — on any LLM/network error the bot leaves messages untouched.
+- 🔒 **Fail-open moderation** — on any LLM/network error the bot leaves
+  messages untouched.
 
 ---
 
 ## Table of contents
 
 - [How it works](#how-it-works)
+- [News digest](#news-digest)
+- [Cost efficiency](#cost-efficiency)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
@@ -68,6 +78,137 @@ Telegram ──webhook──▶ Worker ──▶ [active period?] ──no──
 The bot replies `200 OK` to Telegram immediately and does all the work
 (video/deletion/LLM) inside `waitUntil`, so it never blocks or retries the
 webhook.
+
+---
+
+## News digest
+
+A scheduled tech-news / research-papers digest: the worker gathers from free
+sources, has one LLM call select + summarize + translate + format, and posts
+a polished Telegram-HTML article to your channel. Runs on the Workers free
+plan (zero-key engines, one LLM call per slot).
+
+```
+hourly cron ──▶ gate (schedule + idempotency) ──▶ gather (engines by slot)
+                                                        │
+                                                        ▼
+                                              1 × LLM call (JSON contract)
+                                                        │
+                                                        ▼
+                                     sanitize → draft ──▶ publish / discard
+```
+
+### Schedule and slots
+
+`NEWS_SCHEDULE` is a CSV of `hour:tag` slots in `TIMEZONE` (single source of
+timing; unset = the digest does not run). Each slot pins its own engines and
+token budget, and tags its slot key so same-day slots never collide:
+
+| Tag | Gathers from | Notes |
+|---|---|---|
+| `headlines` | Google News RSS (EN + ZH locales), Hacker News, publisher RSS, Tavily/Exa/Jina Search when keyed | keyword-targeted on the domain topics |
+| `trending` | Hacker News match-all (points velocity) | topic-agnostic by design |
+| `papers` | arXiv, Hugging Face Papers, Semantic Scholar (recent years) | abstracts + authors + venue |
+| `deep` | **No fetching** — analytical deep-dive over today's already-published items | schedule *after* headlines |
+
+Example: `NEWS_SCHEDULE = "9:headlines,12:trending,14:papers,21:deep"`.
+Weekly roundups and monthly deep-dives (`NEWS_ENABLE_WEEKLY`,
+`NEWS_ENABLE_MONTHLY`) fire at the earliest scheduled hour. Missed slots are
+deliberately not caught up — a day-old digest isn't news.
+
+### Content domains
+
+`NEWS_DOMAIN` switches topics + engines + sources atomically: `tech`
+(default, western + Chinese coverage), `finance`, `science`, `health`, or
+`custom` (free-form — **requires** `NEWS_TOPICS`, e.g.
+`"quantum computing, photonics job market"`). Rotation strategies
+(`round-robin` / `random`) cycle one preset per slot; each post records its
+effective domain. `NEWS_MODE` selects `news` / `papers` / `both`.
+
+### Draft review, analytics, settings
+
+- **Drafts first (recommended):** with `NEWS_AUTO_PUBLISH=false`, runs land
+  in the panel's Digest tab for review — Telegram-HTML editor with live
+  preview, save / restore-original / publish / discard, plus retry for
+  failed sends. Flip to `"true"` once prompt quality is trusted.
+- **Interaction analytics** (`ENABLE_POST_ANALYTICS=true` + webhook
+  re-registration with reactions): per-post reaction totals, sentiment,
+  velocity, and trend in the Published table, with domain/type/tag/date
+  filters. Requires the bot to be a channel admin.
+- **Runtime settings:** schedule, domain, topics, language, auto-publish,
+  caps and more are flippable live from the panel's Settings tab (D1-backed
+  overrides — no redeploy). The full reference lives in
+  `wrangler.toml.example`.
+- **Sponsor footer** (`NEWS_SPONSOR_TEXT`): appended post-sanitize, never
+  LLM-generated.
+
+### Telegram setup
+
+Add the bot to the target channel as an admin with **Post Messages** (plus
+reaction access for analytics) and set `NEWS_TARGET_CHAT_ID`. For reaction
+analytics, re-register the webhook with reaction updates:
+`npm run set-webhook -- --reactions`.
+
+### Digest configuration
+
+Non-secrets go in `wrangler.toml [vars]` (see `wrangler.toml.example` for the
+annotated full list); keys via `wrangler secret put`. Schedule, domain,
+topics, language, auto-publish and more are also flippable live from the
+panel's Settings tab without redeploying.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ENABLE_NEWS_DIGEST` | `false` | Master switch for the whole digest |
+| `NEWS_DOMAIN` | `tech` | `tech` / `finance` / `science` / `health` / `custom` / `round-robin` / `random` |
+| `NEWS_MODE` | `news` | `news` / `papers` / `both` |
+| `NEWS_SCHEDULE` | — | `hour:tag` slots, e.g. `"9:headlines,12:trending,14:papers,21:deep"` (hours in `TIMEZONE`) |
+| `NEWS_TARGET_CHAT_ID` | — | Channel/group id; bot must be admin there |
+| `NEWS_TOPICS` | preset | **Required for `custom`:** comma-separated subject phrases |
+| `NEWS_ENGINE` / `NEWS_RSS_FEEDS` / `NEWS_ARXIV_CATEGORIES` / `NEWS_INCLUDE_DOMAINS` | preset | Engine and source-list overrides |
+| `NEWS_LANGUAGE` / `NEWS_DIALECT` | `English` / — | Post language, e.g. `Arabic` / `Standard` |
+| `NEWS_AUTO_PUBLISH` | `false` | `true` = post directly; `false` = drafts await review |
+| `NEWS_MAX_ITEMS` / `NEWS_MIN_POINTS` | `5` / `25` | Items per post; HN points floor |
+| `NEWS_FETCH_FULLTEXT` / `NEWS_EXTRACT_MAX_PER_RUN` | `false` / `4` | Page-text enrichment + per-run cost guard |
+| `NEWS_ENABLE_WEEKLY` / `NEWS_WEEKLY_DAY` / `NEWS_ENABLE_MONTHLY` / `NEWS_MONTHLY_DAY` | `false` / `0` / `false` / `1` | Roundups fire at the earliest scheduled hour |
+| `NEWS_SPONSOR_TEXT` | — | Footer appended post-sanitize, never LLM-generated |
+| `NEWS_DRAFT_NOTIFY_CHAT_ID` / `NEWS_DRAFT_TTL_DAYS` | admins / `7` | Draft-ready notices; stale-draft expiry |
+| `ENABLE_POST_ANALYTICS` | `false` | Reaction capture into `digest_post_stats` |
+| `DIGEST_MODEL` / `DIGEST_BASE_URL` / `DIGEST_API_KEY` | falls back | Independent LLM profile for the digest (endpoint, key, model, timeouts) |
+| `TAVILY_API_KEY` / `EXA_API_KEY` / `JINA_API_KEY` / `LLAMAINDEX_APIKEY` | — | Optional secrets: search + extraction upgrades |
+
+---
+
+## Cost efficiency
+
+The whole stack runs on free tiers — $0/month — with large measured
+headroom. LLM figures below are **metered on live traffic** (Cloudflare AI
+Gateway neuron accounting: 605 input + 35 output tokens = 4.6015 neurons on
+the text model), not estimates. The free budget is **10,000 neurons/day**
+(resets 00:00 UTC; over-limit calls fail, never bill).
+
+| Action | Cost (measured) |
+|---|---|
+| Moderate one text message | ~4.6 neurons |
+| Moderate one media message | ~11 neurons |
+| Publish one deep digest post | ~90 neurons worst case, measured (gemma) / ~15–30 estimated (flash-lite class) |
+| Answer one discussion reply (planned) | ~4 neurons (reranker gate + short answer) |
+
+What a day looks like in practice (real D1 volume: ~6 moderations + 3
+digests + discussion replies ≈ **40–310 neurons/day = 0.4–3.1% of the free
+pool**):
+
+| Daily profile | Neurons | Share of free pool |
+|---|---|---|
+| 100 text + 10 media moderations, 4 flash-lite digests, discussion answers | ~700 | ~7% |
+| Text-moderation-only day | ~2,100 messages | ~100% (the ceiling) |
+| This bot's actual day | ~40–310 | ~0.4–3.1% |
+
+Engines and extraction are equally free at this volume: Google News RSS,
+publisher RSS, HN Algolia, arXiv, Hugging Face and Semantic Scholar are
+keyless and unthrottled for a few calls/day; Jina's shared 10M-token pool
+sits at ~5% monthly use; LlamaParse under 1% of its free credits. Bottom
+line: a busy group (hundreds of messages) plus four digests a day still
+costs **$0**.
 
 ---
 
@@ -341,6 +482,8 @@ SELECT * FROM audit_log WHERE level = 'error' ORDER BY ts DESC LIMIT 50;
 > it also means user message content lives in your D1 database. Set
 > `LOG_LEVEL` higher (e.g. `warn`) and a short `LOG_RETENTION_DAYS` if you want
 > to reduce how much content is retained.
+
+---
 
 ---
 
@@ -622,20 +765,29 @@ Both scripts are idempotent and show what they're killing before they do it.
 ```
 .
 ├── src/
-│   ├── index.ts          # Worker entry: webhook → decide → delete → reply
-│   ├── llm-client.ts     # OpenAI-compatible chat/completions client + prompt
-│   ├── scheduler.ts      # active-period gate + PROCESS_MODE filter
-│   ├── telegram-api.ts   # Telegram Bot API helpers + admin/video policy
-│   ├── logger.ts         # D1 audit logger (level-filtered, structured)
-│   ├── admin.ts          # /admin audit-log viewer (HMAC-signed cookie auth)
-│   └── types.ts          # TypeScript types for Env, updates, messages
+│   ├── index.ts              # Worker entry: webhook / crons / admin panel
+│   ├── core/                 # router, LLM client, Telegram API, logger,
+│   │                         # settings layer, admin shell
+│   ├── shared/               # source engines, HTML sanitizer, chat policy,
+│   │                         # self-clean capability
+│   ├── features/
+│   │   ├── moderation/       # group pipeline + policy + admin routes
+│   │   └── digest/           # gate, pipeline, presets, review console
+│   └── templates/            # admin panel HTML/CSS/JS (served behind auth)
 ├── migrations/
-│   ├── 0001_audit_log.sql        # D1 schema for the audit trail
-│   ├── 0002_user_identity.sql    # adds username + full_name columns
-│   ├── 0003_chat_identity.sql    # adds chat_username + chat_title columns
-│   └── 0004_provider_model.sql   # adds provider + model columns
+│   ├── 0001_audit_log.sql            # D1 schema for the audit trail
+│   ├── 0002_user_identity.sql        # adds username + full_name columns
+│   ├── 0003_chat_identity.sql        # adds chat_username + chat_title columns
+│   ├── 0004_provider_model.sql       # adds provider + model columns
+│   ├── 0005_fulltext_search.sql      # FTS5 index over the audit log
+│   ├── 0006_bot_messages.sql         # self-clean tracking table
+│   ├── 0007_app_settings.sql         # runtime settings overrides
+│   ├── 0007_digest_posts.sql         # digest posts/items/stats tables
+│   ├── 0008_digest_extracted_text.sql# archived source text per item
+│   └── 0009_digest_items_post_index.sql # join index for deep/prune reads
 ├── scripts/
-│   ├── set-webhook.mjs           # one-time webhook registration utility
+│   ├── set-webhook.mjs           # webhook registration (incl. --reactions)
+│   ├── rotate-token.mjs          # bot-token rotation helper
 │   ├── kill-wrangler-dev.cmd     # Windows: terminate wrangler dev tree
 │   └── kill-wrangler-tunnel.cmd  # Windows: terminate wrangler tunnel tree
 ├── wrangler.toml         # Worker config (non-secret vars + D1 binding)

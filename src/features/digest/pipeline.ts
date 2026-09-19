@@ -21,6 +21,7 @@ import type { Env, TelegramUpdate } from '../../core/types';
 import { sanitizeTelegramHtml, normalizeBreaks } from '../../shared/telegram-html';
 import {
   gatherSourcesDetailed,
+  describeEngineFailures,
   extractArticleText,
   extractViaJina,
   extractViaLlamaParse,
@@ -647,13 +648,19 @@ export async function runDigest(
     } else if (!prompt) {
       const gathered = await gatherSourcesDetailed(cfg);
       // Partial backend failure used to degrade silently — name the dead
-      // engines in the audit trail (plan §10, review 1 P2-11).
+      // engines in the audit trail with per-engine hints (plan §10).
       if (gathered.failures.length) {
+        const report = describeEngineFailures(gathered.failures);
         await logger.warn('news_warning', {
           chat_id: Number(cfg.targetChatId),
           decision: 'warn',
-          reason: 'engines_failed',
-          extra: { slot: slotKey, type, engines: gathered.failures },
+          reason: report.reason,
+          extra: {
+            slot: slotKey,
+            type,
+            engines: gathered.failures,
+            hint: report.hint,
+          },
         });
       }
       candidates = gathered.candidates;

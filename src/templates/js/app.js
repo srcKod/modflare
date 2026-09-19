@@ -173,6 +173,15 @@ function detailsBody(row){
   if(row.message_text) parts.push('<div class="d-bubble">'+esc(row.message_text)+'</div>');
   // 5 — reason line
   if(row.reason) parts.push('<div class="d-why">'+esc(row.reason)+'</div>');
+  // 5b — structured detail (slot, engines, hints, post ids…): the audit
+  // trail stores machine context in `extra`, and without rendering it a
+  // warning like engines_failed shows a bare code with no actionable detail.
+  if(row.extra){
+    let det=null;
+    try{ det=typeof row.extra==='string'?JSON.parse(row.extra):row.extra; }catch{}
+    if(det&&typeof det==='object'&&!Array.isArray(det)) parts.push(kvTable(det));
+    else if(det!=null&&det!=='') parts.push('<div class="d-why">'+esc(String(det))+'</div>');
+  }
   // 6 — LLM verdict + fun_response
   if(row.llm_response){
     let parsed=null;
@@ -370,7 +379,13 @@ let dgCurrent=null;   // full row loaded into the editor
 const DG_TAGS=['b','i','u','s','a','code','blockquote'];
 /** Render the Telegram-HTML subset safely for the preview pane. */
 function renderTgHtml(src){
-  let s=esc(src);
+  // The textarea holds server-escaped text (&amp; etc.) — decode first so
+  // entities preview as Telegram renders them, then re-escape and unescape
+  // only the allowlisted tags (mirrors the server sanitizer).
+  let s=String(src==null?'':src)
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+  s=esc(s);
   // Only the allowlisted tags survive; everything else stays escaped text.
   s=s.replace(/&lt;(\/?)(b|i|u|s|blockquote|code|strong|em)&gt;/g,(m,sl,tag)=>{
     const map={strong:'b',em:'i'};
@@ -382,6 +397,21 @@ function renderTgHtml(src){
   });
   s=s.replace(/&lt;(\/?)a&gt;/g,'<$1a>');
   return s;
+}
+/** Client mirror of the server normalizeBreaks: every junction becomes
+ *  exactly one empty line, so the preview matches what publish will send. */
+function normalizeBreaksJs(s){
+  const lines=String(s==null?'':s).replace(/\r\n?/g,'\n').split('\n')
+    .map(l=>l.replace(/[ \t]+$/,''));
+  let a=0;while(a<lines.length&&lines[a]==='')a++;
+  let b=lines.length;while(b>a&&lines[b-1]==='')b--;
+  return lines.slice(a,b).filter(l=>l!=='').join('\n\n');
+}
+/** Client mirror of the server applyRtlMarks (RLM per RTL line). */
+const DG_RTL_RE=/[\u0591-\u07FF\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+function rtlMarksJs(s){
+  return String(s==null?'':s).split('\n')
+    .map(l=>DG_RTL_RE.test(l)?'\u200F'+l:l).join('\n');
 }
 function typeBadge(t){return '<span class="badge dg-type-'+esc(t||'daily')+'">'+esc(t||'daily')+'</span>';}
 function statusBadge(st){
@@ -672,10 +702,10 @@ async function openEditor(id){
   }
   dgCurrent=await r.json();
   document.getElementById('dg-editor').hidden=false;
-  document.getElementById('dg-editor-title').textContent=dgCurrent.title||'(untitled)';
-  document.getElementById('dg-editor-meta').textContent=
-    dgCurrent.slot_key+' · '+dgCurrent.type+(dgCurrent.domain?' · '+dgCurrent.domain:'')+
-    ' · '+dgCurrent.mode+' · '+(dgCurrent.model||'');
+  renderEditorMeta();
+  setEditorDir('auto');
+  // Static display name from the row (env/panel config) — no live lookup.
+  dgCurrent._chatLabel=dgCurrent.target_name||dgCurrent.target_chat_id||'';
   document.getElementById('dg-body').value=dgCurrent.body||'';
   document.getElementById('dg-editor-status').textContent='';
   updateCount();updatePreview();
@@ -690,10 +720,34 @@ function updateCount(){
     v.length+' chars raw'+(v.length>4096?' — WILL be split into parts':'');
 }
 function updatePreview(){
-  document.getElementById('dg-preview').innerHTML=renderTgHtml(document.getElementById('dg-body').value);
+  const v=document.getElementById('dg-body').value;
+  // Preview contract: what publish will send (sanitize ≈ renderTgHtml,
+  // then the same normalize + RTL marks the server applies).
+  document.getElementById('dg-preview').innerHTML=
+    renderTgHtml(normalizeBreaksJs(rtlMarksJs(v)));
+}
+/** Editor direction (textarea + preview together) for mixed-language posts. */
+function setEditorDir(d){
+  document.getElementById('dg-body').dir=d;
+  document.getElementById('dg-preview').dir=d==='auto'?'auto':d;
+  document.querySelectorAll('[data-dg-dir]').forEach(b=>
+    b.classList.toggle('on',b.getAttribute('data-dg-dir')===d));
+}
+document.querySelectorAll('[data-dg-dir]').forEach(b=>
+  b.addEventListener('click',()=>setEditorDir(b.getAttribute('data-dg-dir'))));
+/** Title standalone; metadata as a chip row (slot + type/domain badges). */
+function renderEditorMeta(){
+  const m=dgCurrent;if(!m)return;
+  document.getElementById('dg-editor-title').textContent=m.title||'(untitled)';
+  document.getElementById('dg-editor-meta').innerHTML=
+    '<span class="mono">'+esc(m.slot_key||'')+'</span>'+
+    typeBadge(m.type)+
+    (m.domain?domainBadge(m.domain):'')+
+    '<span class="badge debug">'+esc(m.mode||'')+'</span>'+
+    (m.model?'<span class="mono">'+esc(m.model)+'</span>':'');
 }
 document.getElementById('dg-body').addEventListener('input',()=>{updateCount();updatePreview();});
-document.querySelectorAll('.dg-toolbar button').forEach(b=>{
+document.querySelectorAll('.dg-toolbar button[data-wrap]').forEach(b=>{
   b.addEventListener('click',()=>{
     const ta=document.getElementById('dg-body');
     const tag=b.getAttribute('data-wrap');
@@ -718,7 +772,7 @@ document.getElementById('dg-save').addEventListener('click',async()=>{
   const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
   const st=document.getElementById('dg-editor-status');
   st.textContent=r.ok?'Saved ✓':'Save failed ('+r.status+')';
-  if(r.ok)document.getElementById('dg-editor-meta').textContent=dgCurrent.slot_key+' · '+dgCurrent.type+' · '+dgCurrent.mode+' · '+(dgCurrent.model||'')+' · saved';
+  if(r.ok)renderEditorMeta();
 });
 document.getElementById('dg-restore').addEventListener('click',()=>{
   if(dgCurrent&&dgCurrent.body_original!=null){
@@ -729,7 +783,8 @@ document.getElementById('dg-restore').addEventListener('click',()=>{
 });
 document.getElementById('dg-publish').addEventListener('click',async()=>{
   if(!dgCurrent)return;
-  if(!window.confirm('Publish this digest to '+(dgCurrent.target_chat_id||'the channel')+'?'))return;
+  const where=dgCurrent._chatLabel||dgCurrent.target_chat_id||'the channel';
+  if(!window.confirm('Publish this digest to '+where+'?'))return;
   const sr=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
   if(!sr.ok){document.getElementById('dg-editor-status').textContent='Save failed before publish';return;}
   const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/publish');

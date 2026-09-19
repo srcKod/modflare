@@ -116,7 +116,7 @@
     <div class="dg-editor" id="dg-editor" hidden>
       <div class="dg-editor-head">
         <strong id="dg-editor-title"></strong>
-        <span class="info" id="dg-editor-meta"></span>
+        <span id="dg-editor-meta"></span>
       </div>
       <div class="dg-toolbar">
         <button type="button" data-wrap="b" title="Bold"><b>B</b></button>
@@ -126,11 +126,16 @@
         <button type="button" data-wrap="a" title="Link (uses clipboard or selection URL)">🔗</button>
         <button type="button" data-wrap="code" title="Code">&lt;/&gt;</button>
         <button type="button" data-wrap="blockquote" title="Quote">❝</button>
+        <span class="dg-toolbar-right">
+          <button type="button" data-dg-dir="ltr" title="Left-to-right editing">LTR</button>
+          <button type="button" data-dg-dir="rtl" title="Right-to-left editing">RTL</button>
+          <button type="button" data-dg-dir="auto" title="Direction follows each paragraph (default)">Auto</button>
+          <span class="dg-hint" title="Telegram HTML: &lt;b&gt; &lt;i&gt; &lt;u&gt; &lt;s&gt; &lt;a href&gt; &lt;code&gt; &lt;blockquote&gt; only — everything else is stripped on publish.">?</span>
+        </span>
       </div>
-      <textarea id="dg-body" rows="12" spellcheck="false"></textarea>
+      <textarea id="dg-body" rows="22" spellcheck="false" dir="auto"></textarea>
       <div class="dg-editor-info">
         <span id="dg-count" class="mono"></span>
-        <span class="info">Telegram HTML: &lt;b&gt; &lt;i&gt; &lt;u&gt; &lt;s&gt; &lt;a href&gt; &lt;code&gt; &lt;blockquote&gt; only — everything else is stripped on publish.</span>
       </div>
       <div class="dg-preview-label">Preview (approximate Telegram rendering)</div>
       <div class="dg-preview" id="dg-preview" dir="auto"></div>

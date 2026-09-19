@@ -4,6 +4,8 @@ import {
   extractViaLlamaParse,
   gatherSources,
   gatherSourcesDetailed,
+  describeEngineFailures,
+  ENGINE_HINTS,
 } from '../../src/shared/sources';
 import type { SourceQuery } from '../../src/shared/sources';
 
@@ -150,11 +152,53 @@ describe('engineSemanticScholar (s2)', () => {
     expect(cands).toEqual([]);
   });
 
+  it('sends x-api-key when configured, omits it otherwise', async () => {
+    const seen: Record<string, string>[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        const h = new Headers(init?.headers);
+        const out: Record<string, string> = {};
+        h.forEach((v, k) => {
+          out[k] = v;
+        });
+        seen.push(out);
+        return new Response(JSON.stringify(S2_BODY), { status: 200 });
+      }),
+    );
+    await gatherSources(baseQuery({ s2Key: 's2_test' }));
+    expect(seen.length).toBe(1);
+    expect(seen[0]['x-api-key']).toBe('s2_test');
+
+    seen.length = 0;
+    await gatherSources(baseQuery());
+    expect(seen.length).toBe(1);
+    expect(seen[0]['x-api-key']).toBeUndefined();
+  });
+
   it('detailed report names failed backends and keeps the successes', async () => {
     mockFetchOnce({ status: 500, body: { data: [] } });
     const failed = await gatherSourcesDetailed(baseQuery());
     expect(failed.candidates).toEqual([]);
     expect(failed.failures).toEqual(['s2']);
+  });
+});
+
+describe('describeEngineFailures', () => {
+  it('names the dead engines and attaches per-engine hints', () => {
+    const r = describeEngineFailures(['gnews', 'rss']);
+    expect(r.reason).toContain('gnews');
+    expect(r.reason).toContain('rss');
+    expect(r.reason).toContain('remaining engines');
+    expect(r.hint).toContain('gnews:');
+    expect(r.hint).toContain('rss:');
+  });
+
+  it('every known engine has a hint, unknowns get the fallback', () => {
+    for (const e of ['gnews', 'hn', 'rss', 'tavily', 'exa', 'jsearch', 'arxiv', 'hf', 's2']) {
+      expect(ENGINE_HINTS[e]).toBeTruthy();
+    }
+    expect(describeEngineFailures(['mystery']).hint).toContain('mystery:');
   });
 });
 

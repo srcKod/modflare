@@ -207,16 +207,28 @@ table{min-width:760px}
   background:var(--bg);border:1px solid var(--line);border-radius:10px;
   padding:14px 16px;margin:12px 0 4px
 }
-.dg-editor-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.dg-toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+.dg-editor-head{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin-bottom:10px}
+#dg-editor-title{display:block;font-size:1.05rem;line-height:1.4}
+#dg-editor-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.75rem}
+#dg-editor-meta .mono{font-size:.72rem}
+.dg-toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
 .dg-toolbar button{
   padding:4px 12px;border:1px solid var(--line);border-radius:6px;
   background:#fff;cursor:pointer;font-size:.85rem;line-height:1.3
 }
 .dg-toolbar button:hover{background:#eff6ff;border-color:#93c5fd}
+.dg-toolbar button.on{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
+.dg-toolbar-right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.dg-hint{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--line);background:#f3f4f6;color:var(--muted);
+  font-size:.75rem;font-weight:700;cursor:help;user-select:none
+}
+.dg-hint:hover{color:#111827;border-color:#93c5fd}
 #dg-body{
   width:100%;font-family:ui-monospace,monospace;font-size:.8rem;line-height:1.5;
-  border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:480px;
   resize:vertical;background:#fff;color:#111827;white-space:pre-wrap
 }
 .dg-editor-info{display:flex;gap:14px;align-items:center;margin:6px 0 10px;flex-wrap:wrap}
@@ -224,7 +236,7 @@ table{min-width:760px}
 .dg-preview{
   background:#0f172a;color:#e2e8f0;border-radius:10px;
   padding:12px 14px;font-size:.85rem;line-height:1.55;
-  max-height:340px;overflow-y:auto;word-break:break-word
+  max-height:480px;overflow-y:auto;word-break:break-word;white-space:pre-wrap
 }
 .dg-preview a{color:#7dd3fc}
 .dg-preview blockquote{border-left:3px solid #475569;margin:6px 0;padding:2px 10px;color:#cbd5e1}

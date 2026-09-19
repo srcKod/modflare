@@ -207,6 +207,56 @@ describe('PDF extraction without keys skips the keyless Jina call', () => {
   });
 });
 
+describe('dead engines produce an actionable warning', () => {
+  // The audit row for engines_failed must name the dead backends and carry
+  // hints — a bare code leaves the admin with nothing to act on. All
+  // backends fail here (fetch throws), so the warning fires before the
+  // no-candidates skip, with no LLM and no Telegram involved.
+  it('news_warning reason names engines; extra carries engines + hint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        if (String(url).includes('api.telegram.org')) {
+          throw new Error('seed attempted a live Telegram send');
+        }
+        throw new Error('backend down');
+      }),
+    );
+    try {
+      const seen: string[] = [];
+      const bound: { sql: string; args: unknown[] }[] = [];
+      const env = {
+        DB: stubDb(seen, [], bound),
+        TIMEZONE: 'Asia/Baghdad',
+        NEWS_TARGET_CHAT_ID: '-1001341446217',
+        NEWS_AUTO_PUBLISH: 'true',
+        DIGEST_BASE_URL: 'https://gateway.example/compat',
+        DIGEST_API_KEY: 'k',
+        DIGEST_MODEL: 'test-model',
+      } as unknown as Env;
+      await runDigestFromHour(env, 9, 'headlines');
+      const warn = bound.find(
+        (b) =>
+          b.sql.includes('INSERT INTO audit_log') && b.args[2] === 'news_warning',
+      );
+      expect(warn).toBeDefined();
+      const reason = String(warn!.args[12]);
+      expect(reason).toContain('gnews');
+      expect(reason).toContain('remaining engines');
+      const extra = JSON.parse(String(warn!.args[15])) as {
+        engines: string[];
+        hint: string;
+      };
+      expect(extra.engines).toEqual(expect.arrayContaining(['gnews', 'hn', 'rss']));
+      expect(extra.hint).toContain('gnews:');
+      // Nothing published, no LLM call, no Telegram send.
+      expect(seen.some((s) => s.includes('INSERT INTO digest_posts'))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('deep slot under rotation takes no turn and no label', () => {
   // Deep analyzes the day's published items (whatever domains produced
   // them): no rotation rebuild (no COUNT cursor query), NULL stored domain.
@@ -226,25 +276,49 @@ describe('deep slot under rotation takes no turn and no label', () => {
   ];
 
   it('skips the rotation rebuild and stores a NULL domain', async () => {
-    const seen: string[] = [];
-    const bound: { sql: string; args: unknown[] }[] = [];
-    const env = {
-      DB: stubDb(seen, [], bound, DEEP_ROWS),
-      TIMEZONE: 'Asia/Baghdad',
-      NEWS_TARGET_CHAT_ID: '-1001341446217',
-      NEWS_DOMAIN: 'round-robin',
-      NEWS_AUTO_PUBLISH: 'true',
-      DIGEST_BASE_URL: 'https://gateway.example/compat',
-      DIGEST_API_KEY: 'k',
-      DIGEST_MODEL: 'test-model',
-    } as unknown as Env;
-    const { slotKey } = await runDigestFromHour(env, 21, 'deep');
-    expect(slotKey).toMatch(/T21:deep$/);
-    // No rotation cursor query ran for the deep slot.
-    expect(seen.some((s) => s.includes('COUNT(*)'))).toBe(false);
-    // digest_posts bind order: slot_key, type, run_at, mode, domain, ...
-    const postInsert = bound.find((b) => b.sql.includes('INSERT INTO digest_posts'));
-    expect(postInsert).toBeDefined();
-    expect(postInsert!.args[4]).toBeNull();
+    // NOTE: this describe has no shared fetch stub (the file-level
+    // beforeEach belongs to the first describe only) — stub inline.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        const u = String(url);
+        if (u.includes('api.telegram.org')) {
+          throw new Error('seed attempted a live Telegram send');
+        }
+        if (u.includes('chat/completions')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async (): Promise<string> => LLM_BODY,
+            json: async (): Promise<unknown> => JSON.parse(LLM_BODY),
+          };
+        }
+        throw new Error('unexpected fetch: ' + u);
+      }),
+    );
+    try {
+      const seen: string[] = [];
+      const bound: { sql: string; args: unknown[] }[] = [];
+      const env = {
+        DB: stubDb(seen, [], bound, DEEP_ROWS),
+        TIMEZONE: 'Asia/Baghdad',
+        NEWS_TARGET_CHAT_ID: '-1001341446217',
+        NEWS_DOMAIN: 'round-robin',
+        NEWS_AUTO_PUBLISH: 'true',
+        DIGEST_BASE_URL: 'https://gateway.example/compat',
+        DIGEST_API_KEY: 'k',
+        DIGEST_MODEL: 'test-model',
+      } as unknown as Env;
+      const { slotKey } = await runDigestFromHour(env, 21, 'deep');
+      expect(slotKey).toMatch(/T21:deep$/);
+      // No rotation cursor query ran for the deep slot.
+      expect(seen.some((s) => s.includes('COUNT(*)'))).toBe(false);
+      // digest_posts bind order: slot_key, type, run_at, mode, domain, ...
+      const postInsert = bound.find((b) => b.sql.includes('INSERT INTO digest_posts'));
+      expect(postInsert).toBeDefined();
+      expect(postInsert!.args[4]).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

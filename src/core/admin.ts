@@ -240,7 +240,13 @@ export function json(data: unknown, status = 200): Response {
 
 function htmlResponse(html: string): Response {
   return new Response(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      // Same reasoning as the API responses: the panel must reflect deploys
+      // immediately (a stale cached page + fresh JS, or vice versa, runs
+      // mismatched code — this exact mix once produced phantom artifacts).
+      'Cache-Control': 'no-store',
+    },
   });
 }
 

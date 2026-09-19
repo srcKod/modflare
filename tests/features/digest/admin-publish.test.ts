@@ -143,6 +143,47 @@ describe('failed-row retry', () => {
   });
 });
 
+describe('draft load carries the static target name', () => {
+  // The publish confirm shows the configured channel name, not the raw id —
+  // served from static config on the row (no live Telegram lookup).
+  async function loadOne(settingsRows: { key: string; value: string }[]) {
+    const stmt = {
+      bind: (..._a: unknown[]) => stmt,
+      first: async () => ({
+        id: 5,
+        slot_key: 's',
+        type: 'daily',
+        title: 't',
+        body: 'b',
+        body_original: 'b',
+        status: 'draft',
+        target_chat_id: '-1001',
+      }),
+      all: async () => ({ results: settingsRows }),
+      run: async () => ({ meta: {} }),
+    };
+    const route = digestAdminRoutes.find(
+      (r) => r.method === 'GET' && r.prefix === '/api/digest/drafts',
+    )!;
+    const res = await route.handler(
+      new Request('http://localhost/admin/api/digest/drafts/5'),
+      { DB: { prepare: (_s: string) => stmt } as unknown as D1Database } as unknown as Env,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as { target_name: string | null };
+  }
+
+  it('override name wins', async () => {
+    const row = await loadOne([{ key: 'digest_target_name', value: 'My Channel' }]);
+    expect(row.target_name).toBe('My Channel');
+  });
+
+  it('null when unconfigured', async () => {
+    const row = await loadOne([]);
+    expect(row.target_name).toBeNull();
+  });
+});
+
 describe('digest list header honors runtime overrides', () => {
   // Review 1, P1-6: the header toggles read env-only and went stale once the
   // Settings tab shadowed them.

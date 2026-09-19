@@ -178,6 +178,8 @@ export interface Env {
   NEWS_FETCH_FULLTEXT?: string;
   /** Target channel/group (@username or -100… id). Bot must be an admin there. */
   NEWS_TARGET_CHAT_ID?: string;
+  /** Static display name for the target chat (panel confirms/headers). Unset = show the id. */
+  NEWS_TARGET_CHAT_NAME?: string;
   /** 'true' enables the weekly Roundup (built from the week's published items). */
   NEWS_ENABLE_WEEKLY?: string;
   /** Day of week for the Roundup, 0=Sunday. Default 0. */
@@ -242,6 +244,8 @@ export interface Env {
   JINA_API_KEY?: string;
   /** LlamaParse key (secret) — documents/PDF extraction specialist (10K credits free). */
   LLAMAINDEX_APIKEY?: string;
+  /** Semantic Scholar API key (secret) — lifts anonymous rate limits. Unset = keyless (throttled). */
+  S2_API_KEY?: string;
   /** Max candidates enriched with full-text per run. Default 4 (cost guard). */
   NEWS_EXTRACT_MAX_PER_RUN?: string;
 
