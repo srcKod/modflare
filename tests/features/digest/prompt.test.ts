@@ -17,7 +17,7 @@ const cfg = (over: Partial<DigestConfig> = {}): DigestConfig => ({
   maxItems: 5,
   fetchFulltext: false,
   extractMax: 4,
-  targetChatId: '-1001341446217',
+  targetChatId: '-1001000001',
   weeklyEnabled: false,
   weeklyDay: 0,
   monthlyEnabled: false,

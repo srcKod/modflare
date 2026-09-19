@@ -103,7 +103,7 @@ describe('runDigestFromHour always drafts (never publishes)', () => {
     const env = {
       DB: stubDb(seen),
       TIMEZONE: 'Asia/Baghdad',
-      NEWS_TARGET_CHAT_ID: '-1001341446217',
+      NEWS_TARGET_CHAT_ID: '-1001000001',
       NEWS_AUTO_PUBLISH: 'true', // the trap: seed must draft anyway
       DIGEST_BASE_URL: 'https://gateway.example/compat',
       DIGEST_API_KEY: 'k',
@@ -125,7 +125,7 @@ describe('runDigestFromHour always drafts (never publishes)', () => {
     const env = {
       DB: stubDb(seen, [{ key: 'digest_language', value: 'French' }]),
       TIMEZONE: 'Asia/Baghdad',
-      NEWS_TARGET_CHAT_ID: '-1001341446217',
+      NEWS_TARGET_CHAT_ID: '-1001000001',
       NEWS_DOMAIN: 'round-robin',
       NEWS_AUTO_PUBLISH: 'true',
       DIGEST_BASE_URL: 'https://gateway.example/compat',
@@ -194,7 +194,7 @@ describe('PDF extraction without keys skips the keyless Jina call', () => {
     const env = {
       DB: stubDb(seen),
       TIMEZONE: 'Asia/Baghdad',
-      NEWS_TARGET_CHAT_ID: '-1001341446217',
+      NEWS_TARGET_CHAT_ID: '-1001000001',
       NEWS_AUTO_PUBLISH: 'true',
       NEWS_FETCH_FULLTEXT: 'true',
       DIGEST_BASE_URL: 'https://gateway.example/compat',
@@ -228,7 +228,7 @@ describe('dead engines produce an actionable warning', () => {
       const env = {
         DB: stubDb(seen, [], bound),
         TIMEZONE: 'Asia/Baghdad',
-        NEWS_TARGET_CHAT_ID: '-1001341446217',
+        NEWS_TARGET_CHAT_ID: '-1001000001',
         NEWS_AUTO_PUBLISH: 'true',
         DIGEST_BASE_URL: 'https://gateway.example/compat',
         DIGEST_API_KEY: 'k',
@@ -302,7 +302,7 @@ describe('deep slot under rotation takes no turn and no label', () => {
       const env = {
         DB: stubDb(seen, [], bound, DEEP_ROWS),
         TIMEZONE: 'Asia/Baghdad',
-        NEWS_TARGET_CHAT_ID: '-1001341446217',
+        NEWS_TARGET_CHAT_ID: '-1001000001',
         NEWS_DOMAIN: 'round-robin',
         NEWS_AUTO_PUBLISH: 'true',
         DIGEST_BASE_URL: 'https://gateway.example/compat',

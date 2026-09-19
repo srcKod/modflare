@@ -8,14 +8,14 @@ import type { Env, TelegramUpdate } from '../../../src/core/types';
 // lookup or LLM call — with zero network. The fetch stub throws if touched,
 // so this test proves the exemption costs nothing.
 
-const CHANNEL_ID = -1001341446217;
+const CHANNEL_ID = -1001000001;
 
 function forwardUpdate(): TelegramUpdate {
   return {
     update_id: 7,
     message: {
       message_id: 200,
-      chat: { id: -1001619940016, type: 'supergroup', title: 'Discussion' },
+      chat: { id: -1001000002, type: 'supergroup', title: 'Discussion' },
       from: { id: 1087968824, is_bot: true, username: 'GroupAnonymousBot' },
       forward_from_chat: { id: CHANNEL_ID },
       text: '📰 digest body with links https://example.com/a',
@@ -71,7 +71,7 @@ describe('own digest-post forward exemption', () => {
     expect(ok).toBe(true);
     expect(dbg).toHaveBeenCalledWith(
       'self_post_exempt',
-      expect.objectContaining({ chat_id: -1001619940016, message_id: 200 }),
+      expect.objectContaining({ chat_id: -1001000002, message_id: 200 }),
     );
   });
 
