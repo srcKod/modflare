@@ -164,7 +164,7 @@ panel's Settings tab without redeploying.
 | `NEWS_SCHEDULE` | — | `hour:tag` slots, e.g. `"9:headlines,12:trending,14:papers,21:deep"` (hours in `TIMEZONE`) |
 | `NEWS_TARGET_CHAT_ID` | — | Channel/group id; bot must be admin there |
 | `NEWS_TOPICS` | preset | **Required for `custom`:** comma-separated subject phrases |
-| `NEWS_ENGINE` / `NEWS_RSS_FEEDS` / `NEWS_ARXIV_CATEGORIES` / `NEWS_INCLUDE_DOMAINS` | preset | Engine and source-list overrides |
+| `NEWS_ENGINE` / `NEWS_RSS_FEEDS` / `NEWS_ARXIV_CATEGORIES` / `NEWS_GNEWS_LOCALE` / `NEWS_INCLUDE_DOMAINS` | preset | Engine and source-list overrides; `NEWS_GNEWS_LOCALE` sets Google News locale params, e.g. `hl=ar&gl=EG&ceid=EG:ar` (Arabic-language Google News) |
 | `NEWS_LANGUAGE` / `NEWS_DIALECT` | `English` / — | Post language, e.g. `Arabic` / `Standard` |
 | `NEWS_AUTO_PUBLISH` | `false` | `true` = post directly; `false` = drafts await review |
 | `NEWS_MAX_ITEMS` / `NEWS_MIN_POINTS` | `5` / `25` | Items per post; HN points floor |

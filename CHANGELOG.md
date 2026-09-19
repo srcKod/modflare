@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with reaction analytics (totals, sentiment, velocity, trend) and
   domain/type/slot/date filters, and live runtime settings (schedule,
   domain, topics, language, auto-publish, sponsor footer) without redeploying.
+- `NEWS_GNEWS_LOCALE` override: Google News `hl/gl/ceid` locale params as an
+  env var (comma list = one fetch per locale, merged + deduped). The locale
+  was preset-fixed — `custom` shipped en-US only — so Arabic-language
+  Google News sourcing previously required a code change.
 
 ### Changed
 
@@ -52,6 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The deep slot now keeps up to `DIGEST_DEEP_BODY_LIMIT` (default `7900`,
   env or panel-settable; all other slots keep 3900) and the chunked sender
   handles the longer body.
+- Candidate selection interleaves per engine instead of a global score sort:
+  each engine's candidates keep their internal score order and the prompt
+  pool fills one item per engine per round (cap unchanged), so scored
+  engines (HN points, HF/S2 citations) no longer crowd unscored engines
+  (gnews, publisher RSS, Tavily/Exa/Jina) out of the 12-candidate pool.
+  Engines that fail or lack a required key contribute nothing and drop out
+  naturally; skipped-by-configuration engines surface as an
+  `engines_not_configured` audit entry with a set-this-variable hint.
 
 ### Fixed
 
@@ -59,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   page-error rule (`.error`, 20px padding) overrode the pill badge. Renamed
   the row rule to `.row-error`; level badges (`info`, `debug`, `warn`,
   `error`, …) all render as pills now.
+- Digest domain rotation ignored the panel's `digest_domain` override: the
+  rotation pick read only the env var, so a panel-set `round-robin`/`random`
+  engaged the rotation block but pinned every slot to the env preset. The
+  pick now uses the settings-layer-resolved domain (panel override wins;
+  blank falls through to env).
 
 ### Deployment notes
 
