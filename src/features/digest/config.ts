@@ -321,6 +321,12 @@ export interface DigestConfig {
  *  generic; slots carry explicit budgets via SlotConfig.maxTokens). */
 export const DIGEST_DEFAULT_MAX_TOKENS = 3000;
 
+/** Sanitize char cap for deep-slot post bodies. The deep prompt invites up to
+ *  5000 chars (buildDeepPrompt), so the pipeline's 3900 default chopped those
+ *  posts mid-sentence; deep gets the same headroom the admin publish path
+ *  already used (sendMessageDetailed chunks the send, so it copes). */
+export const DIGEST_DEEP_BODY_LIMIT = 7900;
+
 /**
  * Digest master switch (runtime settings → env → default off). Single source
  * for the cron gate and the panel header — a second inline copy is how the

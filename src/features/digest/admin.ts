@@ -15,6 +15,7 @@ import { sanitizeTelegramHtml } from '../../shared/telegram-html';
 import {
   resolveDigestConfig,
   resolveDigestEnabled,
+  DIGEST_DEEP_BODY_LIMIT,
   parseReactionSignals,
   isRotationDomain,
   parseSchedule,
@@ -176,8 +177,9 @@ async function handleDigestAction(
   // stored body — no LLM involved). The status gate above is what keeps them
   // apart: publish needs a draft, retry needs a failed row.
   // Contract mirrors the pipeline (sanitize → RTL marks → sponsor append) so
-  // manual sends render like auto-publishes (review 1, P1-5). Cap stays wider
-  // than the pipeline's 3900 (edited drafts run longer; chunked send copes);
+  // manual sends render like auto-publishes (review 1, P1-5). Cap is the
+  // deep-slot limit (≥ every pipeline slot cap; edited drafts run longer;
+  // chunked send copes);
   // sponsor resolves override-aware, not env-only.
   const overrides = await loadSettingOverrides(env.DB);
   const cfg = resolveDigestConfig(env, undefined, overrides);
@@ -192,7 +194,8 @@ async function handleDigestAction(
         .replace(/>/g, '&gt;') +
       '</i>';
   }
-  const clean = applyRtlMarks(sanitizeTelegramHtml(row.body, 7900)) + sponsorSuffix;
+  const clean =
+    applyRtlMarks(sanitizeTelegramHtml(row.body, DIGEST_DEEP_BODY_LIMIT)) + sponsorSuffix;
   const sent = await sendMessageDetailed(
     env,
     /^\d+$/.test(row.target_chat_id) ? Number(row.target_chat_id) : row.target_chat_id,

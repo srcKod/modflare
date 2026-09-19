@@ -35,6 +35,7 @@ import {
   resolveDigestConfig,
   resolveDigestEnabled,
   isRotationDomain,
+  DIGEST_DEEP_BODY_LIMIT,
   ROTATION_PRESETS,
   parseSchedule,
   hasSchedule,
@@ -507,6 +508,29 @@ async function loadDeepSource(
   }));
 }
 
+/** Sanitize the LLM post body, normalize breaks, apply RTL marks, then append
+ *  the sponsor footer (post-sanitize, never LLM-generated). The sanitize cap
+ *  is slot-aware: the deep prompt invites up to 5000 chars, so the pipeline's
+ *  3900 default used to chop deep posts mid-sentence — deep now gets
+ *  DIGEST_DEEP_BODY_LIMIT (sendMessageDetailed chunks the send, so it copes);
+ *  every other slot keeps the 3900 single-post default. */
+export function buildPostBody(
+  post: string,
+  tag: SlotTag | undefined,
+  sponsorText?: string | null,
+): string {
+  const limit = tag === 'deep' ? DIGEST_DEEP_BODY_LIMIT : 3900;
+  let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(post, limit)));
+  if (sponsorText) {
+    const sponsor = sponsorText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    body += `\n\n<i>${sponsor}</i>`;
+  }
+  return body;
+}
+
 export async function runDigest(
   env: Env,
   cfg: DigestConfig,
@@ -786,18 +810,12 @@ export async function runDigest(
     return;
   }
 
-  // Sanitize + sponsor footer (appended post-sanitize, never LLM-generated).
-  // Breaks normalized (models vary between \n and \n\n — the channel post
-  // must not inherit that), RTL marks last: every stored/rendered form of
-  // the body is consistent.
-  let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(parsed.post)));
-  if (cfg.sponsorText) {
-    const sponsor = cfg.sponsorText
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    body += `\n\n<i>${sponsor}</i>`;
-  }
+  // Sanitize + sponsor footer via buildPostBody — slot-aware sanitize cap
+  // (deep posts run to 5000 chars per the deep prompt; the old fixed 3900
+  // default truncated them mid-sentence), breaks normalized (models vary
+  // between \n and \n\n — the channel post must not inherit that), RTL marks
+  // last: every stored/rendered form of the body is consistent.
+  let body = buildPostBody(parsed.post, slot?.tag, cfg.sponsorText);
 
   const provider = cfg.llm.baseUrl;
   const insert = await db
