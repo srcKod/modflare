@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into a clean dataset with a single filter, while the lossless raw reply is
   kept as the last column (`llm_response_raw`). The file now starts with a
   UTF-8 BOM so spreadsheet apps render non-ASCII content correctly.
+- **Deep-slot posts are no longer truncated mid-sentence**: the deep prompt
+  invites ~5000-char posts, but every slot shared a 3900-char sanitize cap.
+  The deep slot now keeps up to `DIGEST_DEEP_BODY_LIMIT` (default `7900`,
+  env or panel-settable; all other slots keep 3900) and the chunked sender
+  handles the longer body.
 
 ### Fixed
 

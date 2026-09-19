@@ -193,6 +193,18 @@ export const SETTING_DEFS: SettingDef[] = [
     group: 'digest',
   },
   {
+    key: 'digest_deep_body_limit',
+    label: 'Digest deep-post body cap',
+    description:
+      'Max chars kept from a deep-slot post body (other slots cap at 3900). ' +
+      'The deep prompt invites ~5000-char posts; lower values truncate them again. ' +
+      'Shadows DIGEST_DEEP_BODY_LIMIT.',
+    kind: 'number',
+    envVar: 'DIGEST_DEEP_BODY_LIMIT',
+    default: '7900',
+    group: 'digest',
+  },
+  {
     key: 'digest_sponsor',
     label: 'Digest sponsor footer',
     description:

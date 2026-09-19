@@ -25,6 +25,7 @@ const cfg = (over: Partial<DigestConfig> = {}): DigestConfig => ({
   language: 'English',
   autoPublish: false,
   draftTtlDays: 7,
+  deepBodyLimit: 7900,
   postAnalytics: false,
   gnewsLocale: 'hl=en-US&gl=US&ceid=US:en',
   rssFeeds: [],

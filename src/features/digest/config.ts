@@ -296,6 +296,8 @@ export interface DigestConfig {
   autoPublish: boolean;
   draftTtlDays: number;
   sponsorText?: string;
+  /** Sanitize cap (chars) for deep-slot post bodies; other slots keep 3900. */
+  deepBodyLimit: number;
   postAnalytics: boolean;
   llm: {
     baseUrl: string;
@@ -321,10 +323,12 @@ export interface DigestConfig {
  *  generic; slots carry explicit budgets via SlotConfig.maxTokens). */
 export const DIGEST_DEFAULT_MAX_TOKENS = 3000;
 
-/** Sanitize char cap for deep-slot post bodies. The deep prompt invites up to
- *  5000 chars (buildDeepPrompt), so the pipeline's 3900 default chopped those
- *  posts mid-sentence; deep gets the same headroom the admin publish path
- *  already used (sendMessageDetailed chunks the send, so it copes). */
+/** Default sanitize cap (chars) for deep-slot post bodies — overridable via
+ *  DIGEST_DEEP_BODY_LIMIT / digest_deep_body_limit (clamped 1000–20000). The
+ *  deep prompt invites up to 5000 chars (buildDeepPrompt), so the shared 3900
+ *  default chopped those posts mid-sentence; 7900 is the headroom the admin
+ *  publish path already used (sendMessageDetailed chunks the send, so it
+ *  copes). Non-deep slots keep the 3900 single-post cap regardless. */
 export const DIGEST_DEEP_BODY_LIMIT = 7900;
 
 /**
@@ -425,6 +429,14 @@ export function resolveDigestConfig(
     autoPublish: (ov('digest_autopublish', 'NEWS_AUTO_PUBLISH') || '').trim().toLowerCase() === 'true',
     draftTtlDays: Number(env.NEWS_DRAFT_TTL_DAYS) || 7,
     sponsorText: ovTrim('digest_sponsor', 'NEWS_SPONSOR_TEXT') || undefined,
+    deepBodyLimit: Math.min(
+      20000,
+      Math.max(
+        1000,
+        Number(ov('digest_deep_body_limit', 'DIGEST_DEEP_BODY_LIMIT')) ||
+          DIGEST_DEEP_BODY_LIMIT,
+      ),
+    ),
     postAnalytics: (env.ENABLE_POST_ANALYTICS || '').trim() === 'true',
     llm: {
       baseUrl: (env.DIGEST_BASE_URL || env.OPENAI_BASE_URL || '').replace(

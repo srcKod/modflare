@@ -171,6 +171,7 @@ panel's Settings tab without redeploying.
 | `NEWS_FETCH_FULLTEXT` / `NEWS_EXTRACT_MAX_PER_RUN` | `false` / `4` | Page-text enrichment + per-run cost guard |
 | `NEWS_ENABLE_WEEKLY` / `NEWS_WEEKLY_DAY` / `NEWS_ENABLE_MONTHLY` / `NEWS_MONTHLY_DAY` | `false` / `0` / `false` / `1` | Roundups fire at the earliest scheduled hour |
 | `NEWS_SPONSOR_TEXT` | — | Footer appended post-sanitize, never LLM-generated |
+| `DIGEST_DEEP_BODY_LIMIT` | `7900` | Char cap for deep-slot post bodies (other slots: 3900); deep prompt invites ~5000 chars |
 | `NEWS_DRAFT_NOTIFY_CHAT_ID` / `NEWS_DRAFT_TTL_DAYS` | admins / `7` | Draft-ready notices; stale-draft expiry |
 | `ENABLE_POST_ANALYTICS` | `false` | Reaction capture into `digest_post_stats` |
 | `DIGEST_MODEL` / `DIGEST_BASE_URL` / `DIGEST_API_KEY` | falls back | Independent LLM profile for the digest (endpoint, key, model, timeouts) |

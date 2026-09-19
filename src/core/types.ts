@@ -261,6 +261,8 @@ export interface Env {
   DIGEST_EXTRA_BODY_JSON?: string;
   /** 'json' = send response_format json_object for the digest. Default json. */
   DIGEST_RESPONSE_FORMAT?: string;
+  /** Deep-slot post-body sanitize cap in chars (other slots keep 3900). Default 7900. */
+  DIGEST_DEEP_BODY_LIMIT?: string;
 }
 
 /** Telegram Update object (subset relevant to this bot). */

@@ -510,16 +510,18 @@ async function loadDeepSource(
 
 /** Sanitize the LLM post body, normalize breaks, apply RTL marks, then append
  *  the sponsor footer (post-sanitize, never LLM-generated). The sanitize cap
- *  is slot-aware: the deep prompt invites up to 5000 chars, so the pipeline's
- *  3900 default used to chop deep posts mid-sentence — deep now gets
- *  DIGEST_DEEP_BODY_LIMIT (sendMessageDetailed chunks the send, so it copes);
- *  every other slot keeps the 3900 single-post default. */
+ *  is slot-aware: the deep prompt invites up to 5000 chars, so the shared
+ *  3900 default used to chop deep posts mid-sentence — deep gets deepLimit
+ *  (cfg.deepBodyLimit: DIGEST_DEEP_BODY_LIMIT env / digest_deep_body_limit
+ *  override, default 7900 — sendMessageDetailed chunks the send, so it
+ *  copes); every other slot keeps the 3900 single-post default. */
 export function buildPostBody(
   post: string,
   tag: SlotTag | undefined,
   sponsorText?: string | null,
+  deepLimit: number = DIGEST_DEEP_BODY_LIMIT,
 ): string {
-  const limit = tag === 'deep' ? DIGEST_DEEP_BODY_LIMIT : 3900;
+  const limit = tag === 'deep' ? deepLimit : 3900;
   let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(post, limit)));
   if (sponsorText) {
     const sponsor = sponsorText
@@ -815,7 +817,7 @@ export async function runDigest(
   // default truncated them mid-sentence), breaks normalized (models vary
   // between \n and \n\n — the channel post must not inherit that), RTL marks
   // last: every stored/rendered form of the body is consistent.
-  let body = buildPostBody(parsed.post, slot?.tag, cfg.sponsorText);
+  let body = buildPostBody(parsed.post, slot?.tag, cfg.sponsorText, cfg.deepBodyLimit);
 
   const provider = cfg.llm.baseUrl;
   const insert = await db
