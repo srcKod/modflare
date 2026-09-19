@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source), `POST /api/settings` (validated upsert), `POST /api/settings/reset`
   (delete override). Writes are CSRF-checked; unlisted keys are rejected.
 
+### Changed
+
+- **Normalized audit CSV export** (`export.csv`): the model's raw reply is no
+  longer a single opaque JSON cell. It is parsed into atomic columns —
+  `flag`, `llm_reason`, `fun_response`, and a `parse_status` quality signal
+  (`json` / `json_in_prose` / `plain` / `empty`) — so the file can be filtered
+  into a clean dataset with a single filter, while the lossless raw reply is
+  kept as the last column (`llm_response_raw`). The file now starts with a
+  UTF-8 BOM so spreadsheet apps render non-ASCII content correctly.
+
 ### Fixed
 
 - Audit table `error`-level badge rendered as a bloated blob: the generic

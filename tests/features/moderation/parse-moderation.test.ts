@@ -27,6 +27,10 @@ describe('parseModeration', () => {
     expect(parseModeration('flag: true').flag).toBe(true);
     expect(parseModeration('yes').flag).toBe(true);
     expect(parseModeration('flag=true').flag).toBe(true);
+    // A bare JSON scalar is NOT a moderation reply object — it must reach the
+    // plain-token fallback instead of parsing to a silent SAFE (regression:
+    // JSON.parse('true') succeeds and used to yield flag=false).
+    expect(parseModeration('true').flag).toBe(true);
   });
 
   it('fails open: empty, unparseable, or garbage output never flags', () => {

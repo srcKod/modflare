@@ -46,3 +46,24 @@ export interface JsonModerationReply {
   /** Optional funny reply, requested only when ENABLE_FUNRESPONSE is on. */
   fun_response?: unknown;
 }
+
+/** How a raw model reply parsed — also used as an audit-CSV quality signal. */
+export type ModerationParseStatus =
+  | 'json' // strict JSON reply
+  | 'json_in_prose' // JSON object extracted from surrounding prose
+  | 'plain' // no JSON, but a plain flag line ("true"/"yes")
+  | 'empty' // empty reply (model said nothing / synthesized error)
+  | 'unparseable'; // non-empty, no JSON, no flag pattern
+
+/** Structured read of a raw model reply. Only fields actually present in
+ * the reply are set — the moderation parser and the audit CSV export share
+ * this so both agree on what the model said. */
+export interface ModerationParse {
+  status: ModerationParseStatus;
+  /** Model's verdict; set for json / json_in_prose / plain, else undefined. */
+  flag?: boolean;
+  /** Model's stated reason (json / json_in_prose only; may be ''). */
+  reason?: string;
+  /** Funny-reply line when the reply carried one. */
+  funResponse?: string;
+}

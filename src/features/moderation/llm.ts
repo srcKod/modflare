@@ -13,6 +13,7 @@ import type { Env } from '../../core/types';
 import type {
   JsonModerationReply,
   MediaPart,
+  ModerationParse,
   ModerationResult,
 } from './types';
 
@@ -126,6 +127,70 @@ export async function moderateContent(
 }
 
 /**
+ * Structured read of a raw model reply. The moderation parser and the audit
+ * CSV export share this so both agree on what the model actually said. See
+ * ModerationParse (types.ts) for the status taxonomy; only fields the reply
+ * actually carries are set — notably `plain` carries flag=true with no
+ * synthetic reason.
+ */
+export function parseModerationDetailed(raw: string): ModerationParse {
+  const stripped = raw.trim();
+  if (!stripped) return { status: 'empty' };
+
+  const fromParsed = (
+    parsed: JsonModerationReply,
+    status: 'json' | 'json_in_prose',
+  ): ModerationParse => {
+    const flag =
+      parsed.flag === true ||
+      parsed.flag === 'true' ||
+      parsed.flag === 'yes' ||
+      parsed.flag === 1;
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
+
+    let funResponse: string | undefined;
+    const f = parsed.fun_response;
+    if (typeof f === 'string' && f.trim()) funResponse = f.trim();
+
+    const out: ModerationParse = { status, flag, reason };
+    if (funResponse) out.funResponse = funResponse;
+    return out;
+  };
+
+  // Only a JSON object is a moderation reply — bare JSON scalars (a model
+  // replying just `true` / `false` / "yes") fall through to the plain-token
+  // check below, matching its documented intent.
+  try {
+    const parsed: unknown = JSON.parse(stripped);
+    if (parsed && typeof parsed === 'object') {
+      return fromParsed(parsed as JsonModerationReply, 'json');
+    }
+  } catch {
+    /* not strict JSON — try to extract */
+  }
+
+  // Extract first JSON object anywhere in the text.
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      return fromParsed(
+        JSON.parse(match[0]) as JsonModerationReply,
+        'json_in_prose',
+      );
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // Plain-token fallback: lines that read "true"/"yes"/"flag".
+  if (/flag\s*[:=]\s*(true|1|yes)|^\s*(true|yes)\s*$/i.test(stripped)) {
+    return { status: 'plain', flag: true };
+  }
+
+  return { status: 'unparseable' };
+}
+
+/**
  * Parse the model's reply into a ModerationResult. Tolerates a JSON object,
  * a JSON object embedded in prose, or a graceful fallback to a plain flag line.
  * Anything unparsed defaults to SAFE (fail-open).
@@ -136,52 +201,26 @@ export function parseModeration(
   raw: string,
   llmResponse = raw,
 ): ModerationResult {
-  const stripped = raw.trim();
-
-  try {
-    const parsed = JSON.parse(stripped) as JsonModerationReply;
-    return toResult(parsed, llmResponse);
-  } catch {
-    /* not strict JSON — try to extract */
-  }
-
-  // Extract first JSON object anywhere in the text.
-  const match = stripped.match(/\{[\s\S]*\}/);
-  if (match) {
-    try {
-      return toResult(JSON.parse(match[0]) as JsonModerationReply, llmResponse);
-    } catch {
-      /* fall through */
+  const parsed = parseModerationDetailed(raw);
+  switch (parsed.status) {
+    case 'json':
+    case 'json_in_prose': {
+      const base: ModerationResult = {
+        flag: parsed.flag ?? false,
+        reason: parsed.reason ?? '',
+        llmResponse,
+      };
+      return parsed.funResponse
+        ? { ...base, funResponse: parsed.funResponse }
+        : base;
     }
+    case 'plain':
+      return { flag: true, reason: 'flagged', llmResponse };
+    default:
+      if (raw.trim()) {
+        // Non-empty but unparseable: log so we can see what the model said.
+        console.error(`LLM reply unparseable: ${raw.trim().slice(0, 300)}`);
+      }
+      return { flag: false, reason: 'unparseable', llmResponse };
   }
-
-  // Plain-token fallback: lines that read "true"/"yes"/"flag".
-  if (/flag\s*[:=]\s*(true|1|yes)|^\s*(true|yes)\s*$/i.test(stripped)) {
-    return { flag: true, reason: 'flagged', llmResponse };
-  }
-
-  if (stripped) {
-    // Non-empty but unparseable: log so we can see what the model said.
-    console.error(`LLM reply unparseable: ${stripped.slice(0, 300)}`);
-  }
-  return { flag: false, reason: 'unparseable', llmResponse };
-}
-
-function toResult(
-  parsed: JsonModerationReply,
-  llmResponse: string,
-): ModerationResult {
-  const flag =
-    parsed.flag === true ||
-    parsed.flag === 'true' ||
-    parsed.flag === 'yes' ||
-    parsed.flag === 1;
-  const reason = typeof parsed.reason === 'string' ? parsed.reason : '';
-
-  let funResponse: string | undefined;
-  const f = parsed.fun_response;
-  if (typeof f === 'string' && f.trim()) funResponse = f.trim();
-
-  const base: ModerationResult = { flag, reason, llmResponse };
-  return funResponse ? { ...base, funResponse } : base;
 }

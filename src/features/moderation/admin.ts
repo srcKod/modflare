@@ -9,6 +9,7 @@ import { envBool } from '../../core/config';
 import { json } from '../../core/admin';
 import type { AdminRoute } from '../../core/router';
 import type { Env } from '../../core/types';
+import { parseModerationDetailed } from './llm';
 
 /** Hard cap on rows returned by the CSV export to avoid OOM. */
 const EXPORT_MAX_ROWS = 5000;
@@ -219,23 +220,60 @@ async function handleExport(request: Request, env: Env): Promise<Response> {
     .bind(...binds)
     .all();
 
-  const header = ['ts', 'level', 'event', 'provider', 'model', 'chat_id', 'chat_username', 'chat_title', 'user_id', 'username', 'full_name', 'decision', 'reason', 'message_text', 'llm_response'];
-  const lines = [header.join(',')];
-  for (const r of rows.results ?? []) {
-    const row = r as Record<string, unknown>;
-    lines.push(
-      header
-        .map((h) => csvCell(row[h]))
-        .join(','),
-    );
-  }
-
-  return new Response(lines.join('\n'), {
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="audit-log-${Date.now()}.csv"`,
+  return new Response(
+    buildExportCsv((rows.results ?? []) as Record<string, unknown>[]),
+    {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="audit-log-${Date.now()}.csv"`,
+      },
     },
-  });
+  );
+}
+
+/**
+ * Normalized export header. The model's raw reply is parsed into atomic
+ * columns (`flag`, `llm_reason`, `fun_response`) so the file is directly
+ * filterable for dataset work — e.g. keep rows where `parse_status` is
+ * `json` and `event` is flagged/safe — while `llm_response_raw` keeps the
+ * lossless original as the last column.
+ *
+ * `parse_status` vocabulary:
+ *  - `json`          — reply was strict JSON; flag/llm_reason filled
+ *  - `json_in_prose` — JSON object extracted from surrounding prose
+ *  - `plain`         — plain flag line ("true"/"yes"); flag=true, no reason
+ *  - `empty`         — empty reply cell (transport error / model said nothing)
+ *  - `` (blank)      — the event never carried a model reply (skips, errors)
+ */
+export const EXPORT_CSV_HEADER = [
+  'ts', 'level', 'event', 'provider', 'model',
+  'chat_id', 'chat_username', 'chat_title',
+  'user_id', 'username', 'full_name',
+  'decision', 'reason',
+  'flag', 'llm_reason', 'fun_response', 'parse_status',
+  'message_text', 'llm_response_raw',
+] as const;
+
+/** Build the normalized export CSV: BOM + header row + one line per row. */
+export function buildExportCsv(rows: Record<string, unknown>[]): string {
+  const lines = [EXPORT_CSV_HEADER.join(',')];
+  for (const row of rows) {
+    const hasReply = typeof row.llm_response === 'string';
+    const raw = hasReply ? (row.llm_response as string) : '';
+    const parsed = parseModerationDetailed(raw);
+    const shaped: Record<string, unknown> = {
+      ...row,
+      flag: parsed.flag === undefined ? '' : String(parsed.flag),
+      llm_reason: parsed.reason ?? '',
+      fun_response: parsed.funResponse ?? '',
+      parse_status: hasReply ? parsed.status : '',
+      llm_response_raw: raw,
+    };
+    lines.push(EXPORT_CSV_HEADER.map((h) => csvCell(shaped[h])).join(','));
+  }
+  // UTF-8 BOM so spreadsheet apps auto-detect the encoding for non-ASCII
+  // content (message text and fun replies are frequently non-Latin).
+  return `\uFEFF${lines.join('\n')}`;
 }
 
 function csvCell(v: unknown): string {
