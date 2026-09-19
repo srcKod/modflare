@@ -323,3 +323,22 @@ describe('topic phrases survive comma-splitting', () => {
     expect(cfg.topics).toContain('AI agents');
   });
 });
+
+describe('NEWS_GNEWS_LOCALE override', () => {
+  // gnewsLocale is preset-fixed by default (custom ships en-US only); the env
+  // override is the lever for Arabic-language Google News sourcing.
+  it('replaces the preset locale when set', () => {
+    const cfg = resolveDigestConfig({
+      NEWS_DOMAIN: 'custom',
+      NEWS_GNEWS_LOCALE: 'hl=ar&gl=EG&ceid=EG:ar, hl=en-US&gl=US&ceid=US:en',
+    } as never);
+    expect(cfg.gnewsLocale).toBe('hl=ar&gl=EG&ceid=EG:ar, hl=en-US&gl=US&ceid=US:en');
+  });
+
+  it('falls back to the preset locale when unset or blank', () => {
+    const unset = resolveDigestConfig({ NEWS_DOMAIN: 'custom' } as never);
+    expect(unset.gnewsLocale).toBe('hl=en-US&gl=US&ceid=US:en');
+    const blank = resolveDigestConfig({ NEWS_DOMAIN: 'custom', NEWS_GNEWS_LOCALE: '   ' } as never);
+    expect(blank.gnewsLocale).toBe('hl=en-US&gl=US&ceid=US:en');
+  });
+});

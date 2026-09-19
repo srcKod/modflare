@@ -460,7 +460,7 @@ export function resolveDigestConfig(
     jinaKey: env.JINA_API_KEY,
     llamaKey: env.LLAMAINDEX_APIKEY,
     s2Key: env.S2_API_KEY,
-    gnewsLocale: preset.gnewsLocale,
+    gnewsLocale: (env.NEWS_GNEWS_LOCALE || '').trim() || preset.gnewsLocale,
     rssFeeds: envList(env.NEWS_RSS_FEEDS).length
       ? envList(env.NEWS_RSS_FEEDS)
       : preset.rssFeeds,

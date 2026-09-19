@@ -184,14 +184,26 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 #   S2_API_KEY          — Semantic Scholar key (free on request,
 #                         semanticscholar.org/product/api#api-key-form). Lifts the
 #                         anonymous 429s; unset = keyless best-effort.
-# NEWS_RSS_FEEDS = "https://www.qbitai.com/feed"
+#   NEWS_RSS_FEEDS — explicit publisher RSS URLs for the `rss` engine; REPLACES
+#   the preset feed list. The custom preset ships NONE, so this is the main
+#   free lever for giving custom real sources (title+description feed the
+#   candidate pool; the LLM translates to the digest language). Examples:
+# NEWS_RSS_FEEDS = "https://feeds.bbci.co.uk/arabic/rss.xml, https://www.aljazeera.com/xml/rss/all.xml"
+# NEWS_RSS_FEEDS = "https://variety.com/feed/, https://www.billboard.com/feed/"
+#   NEWS_GNEWS_LOCALE — Google News hl/gl/ceid locale params for the `gnews`
+#   engine; REPLACES the preset locale (custom preset is en-US only).
+#   Comma-separated list = one fetch per locale, merged + deduped. This is the
+#   lever for Arabic-language Google News sourcing:
+# NEWS_GNEWS_LOCALE = "hl=ar&gl=EG&ceid=EG:ar"
+#   Two locales: "hl=ar&gl=EG&ceid=EG:ar,hl=en-US&gl=US&ceid=US:en"
 # NEWS_TOPICS = "artificial intelligence, developer tools"
 #   REQUIRED when NEWS_DOMAIN=custom: custom is the free-form domain — it
 #   ships no topics of its own, so set any comma-separated subject list here
 #   (e.g. "quantum computing, photonics job market"). Runs with custom + no
 #   topics log a custom_no_topics warning and gather match-all mush instead
 #   of anything topical. Refine further with NEWS_ENGINE /
-#   NEWS_ARXIV_CATEGORIES / NEWS_RSS_FEEDS / NEWS_INCLUDE_DOMAINS below.
+#   NEWS_ARXIV_CATEGORIES / NEWS_RSS_FEEDS / NEWS_GNEWS_LOCALE /
+#   NEWS_INCLUDE_DOMAINS below.
 # NEWS_ARXIV_CATEGORIES = "cs.AI,cs.CL"
 # NEWS_INCLUDE_DOMAINS = "arstechnica.com, theverge.com"
 # NEWS_DRAFT_NOTIFY_CHAT_ID = "-100XXXXXXXXXX"  # unset -> DM every ADMIN_USER_IDS

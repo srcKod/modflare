@@ -166,6 +166,13 @@ export interface Env {
   NEWS_ENGINE?: string;
   /** Explicit publisher-RSS URLs (comma-separated) for engine `rss` / additive feeds. */
   NEWS_RSS_FEEDS?: string;
+  /**
+   * Google News hl/gl/ceid locale params for the `gnews` engine. Comma-separated
+   * list = one fetch per locale, results merged + deduped. Overrides the preset
+   * (custom ships en-US only) — the lever for Arabic-language Google News.
+   * Example: "hl=ar&gl=EG&ceid=EG:ar".
+   */
+  NEWS_GNEWS_LOCALE?: string;
   /** arXiv categories (comma list → cat:X OR cat:Y). Default from preset. */
   NEWS_ARXIV_CATEGORIES?: string;
   /** Trusted-source domain allowlist applied to all engine results. Empty = preset. */
