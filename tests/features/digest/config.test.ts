@@ -79,6 +79,28 @@ describe('resolveSlotDomain', () => {
     expect(await resolveSlotDomain(envWith('finance'), stubDb(9), 's')).toBe('finance');
   });
 
+  it('settings-layer override wins over the raw env var (panel says random, env says tech)', async () => {
+    // Regression: the pick used to read only env.NEWS_DOMAIN, so a digest_domain
+    // override engaged the rotation block but pinned every slot to env's preset.
+    const keys = [
+      '2026-09-19T09:headlines', '2026-09-19T14:papers',
+      '2026-09-20T09:headlines', '2026-09-20T14:papers',
+      '2026-09-21T09:headlines', '2026-09-21T14:papers',
+      '2026-09-22T09:headlines', '2026-09-22T14:papers',
+    ];
+    const picks = [];
+    for (const k of keys) {
+      const picked = await resolveSlotDomain(envWith('tech'), stubDb(0), k, undefined, 'random');
+      expect(ROTATION_PRESETS).toContain(picked);
+      picks.push(picked);
+    }
+    expect(new Set(picks).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('override with a fixed preset pins that preset even when env holds a strategy', async () => {
+    expect(await resolveSlotDomain(envWith('random'), stubDb(9), 's', undefined, 'finance')).toBe('finance');
+  });
+
   it('round-robin walks the preset list by attempted-slot cursor', async () => {
     const env = envWith('round-robin');
     for (let i = 0; i < ROTATION_PRESETS.length * 2; i++) {

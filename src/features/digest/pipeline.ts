@@ -414,13 +414,18 @@ export function applyRtlMarks(body: string): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * Resolve the effective domain for this slot when NEWS_DOMAIN holds a
- * rotation strategy. Both strategies are *slot-deterministic* — the same
- * slot always resolves to the same domain — so a manual retry after a
- * transient failure regenerates the same topic instead of skipping a beat:
+ * Resolve the effective domain for the slot when the configured domain holds
+ * a rotation strategy. Random is key-hashed (fully slot-deterministic);
+ * round-robin is cursor-based — stable across a retry of the same failed slot
+ * as long as no other daily row lands in between:
  *   round-robin: cursor = count of attempted daily slots % presets
  *   random:      stable hash of the slot key
  * Returns the configured value unchanged for fixed presets.
+ *
+ * `configuredDomain` must carry the settings-layer-resolved value (cfg.domain,
+ * which honors digest_domain overrides). Falling back to the raw env var here
+ * silently pinned every slot to env's fixed preset when the panel set a
+ * strategy — the rotation block engaged from the override but the pick did not.
  */
 export async function resolveSlotDomain(
   env: Env,
@@ -429,8 +434,11 @@ export async function resolveSlotDomain(
   /** Scope the round-robin cursor to one channel (multi-chat future-proof;
    *  omitted = global cursor, the historical behavior). */
   chatId?: string,
+  /** Effective configured domain (preset name or rotation strategy).
+   *  Defaults to the raw env var for callers without a resolved config. */
+  configuredDomain?: string,
 ): Promise<string> {
-  const configured = (env.NEWS_DOMAIN || 'tech').trim();
+  const configured = (configuredDomain ?? (env.NEWS_DOMAIN || 'tech')).trim();
   if (!isRotationDomain(configured)) return configured;
   const presets = ROTATION_PRESETS;
   if ((configured || '').toLowerCase() === 'random') {
@@ -572,7 +580,7 @@ export async function runDigest(
   // (whatever domains the day produced), so a rotation pick would be a
   // fiction — no rebuild, no cursor turn consumed, NULL domain label.
   if (cfg.rotation && slot?.tag !== 'deep') {
-    const picked = await resolveSlotDomain(env, db, slotKey, cfg.targetChatId);
+    const picked = await resolveSlotDomain(env, db, slotKey, cfg.targetChatId, cfg.domain);
     cfg = resolveDigestConfig(env, picked, overrides);
     if (slot) cfg = applySlotOverride(cfg, slot);
   }
