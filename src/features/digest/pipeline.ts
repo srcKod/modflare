@@ -22,6 +22,7 @@ import { sanitizeTelegramHtml, normalizeBreaks } from '../../shared/telegram-htm
 import {
   gatherSourcesDetailed,
   describeEngineFailures,
+  describeEngineSkips,
   extractArticleText,
   extractViaJina,
   extractViaLlamaParse,
@@ -659,6 +660,24 @@ export async function runDigest(
             slot: slotKey,
             type,
             engines: gathered.failures,
+            hint: report.hint,
+          },
+        });
+      }
+      // Not-configured engines are healthy-but-dormant (missing key / no
+      // feeds / no categories). One info per run — configuration status, not
+      // a failure — so a dormant paid engine is visible instead of silently
+      // absent (review 2: not-configured visibility).
+      if (gathered.skipped.length) {
+        const report = describeEngineSkips(gathered.skipped);
+        await logger.info('news_info', {
+          chat_id: Number(cfg.targetChatId),
+          decision: 'info',
+          reason: report.reason,
+          extra: {
+            slot: slotKey,
+            type,
+            engines: gathered.skipped,
             hint: report.hint,
           },
         });

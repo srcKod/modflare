@@ -22,6 +22,10 @@ export interface DigestCandidate {
   date?: string;
   snippet?: string;
   score?: number; // engine signal (points/upvotes) — ranking hint only
+  /** Engine that produced the candidate (attribution for the diversity-aware
+   *  selection pass; set by gatherSourcesDetailed, never reaches LLM prompts,
+   *  which map an explicit field list). */
+  engine?: string;
 }
 
 /**
@@ -470,11 +474,16 @@ async function engineRss(q: SourceQuery, out: DigestCandidate[]): Promise<boolea
   return ok;
 }
 
-/** Result of a gather run: ranked candidates + backends that failed when tried. */
+/** Result of a gather run: ranked candidates + per-engine audit state. */
 export interface GatherReport {
   candidates: DigestCandidate[];
   /** Engine names whose backend call failed (key-gated skips don't count). */
   failures: string[];
+  /** Configured engines that had nothing to run — missing key, no RSS feeds,
+   *  no arXiv categories. Deliberately NOT failures (the run is healthy);
+   *  surfaced so a dormant paid engine is visible instead of silently absent
+   *  (review 2: not-configured visibility). */
+  skipped: string[];
 }
 
 /**
@@ -506,6 +515,38 @@ const DEFAULT_ENGINE_HINT =
   'Backend unreachable; usually transient. Persistent failures need a look.';
 
 /**
+ * What a not-configured engine needs to wake up — same shape as the failure
+ * hints so the audit Details panel treats both uniformly.
+ */
+const ENGINE_SKIP_HINTS: Record<string, string> = {
+  tavily: 'set TAVILY_API_KEY to enable the tavily engine.',
+  exa: 'set EXA_API_KEY to enable the exa engine.',
+  jsearch: 'set JINA_API_KEY to enable the jsearch engine.',
+  rss: 'set NEWS_RSS_FEEDS (or a preset with feeds) to enable the rss engine.',
+  arxiv: 'set NEWS_ARXIV_CATEGORIES (or a preset with categories) to enable arXiv.',
+};
+
+const DEFAULT_ENGINE_SKIP_HINT =
+  'configure its key or inputs to enable it.';
+
+/**
+ * Human summary for a skipped-engine set: names the dormant engines and what
+ * each needs. Pure (unit-tested); logged at info level — configuration
+ * status, not a failure.
+ */
+export function describeEngineSkips(skipped: string[]): {
+  reason: string;
+  hint: string;
+} {
+  return {
+    reason: `engines_not_configured: ${skipped.join(', ')} had nothing to run — skipped until configured`,
+    hint: skipped
+      .map((s) => `${s}: ${ENGINE_SKIP_HINTS[s] ?? DEFAULT_ENGINE_SKIP_HINT}`)
+      .join(' '),
+  };
+}
+
+/**
  * Human summary + hints for a failed-engine set. Pure (unit-tested) so the
  * audit row explains itself: which backends died and what each likely means.
  */
@@ -528,32 +569,114 @@ export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> 
 }
 
 /**
- * Same as gatherSources, plus per-engine reachability for audit warnings
- * (review 1, P2-11: a dead engine used to degrade silently). Unknown engine
- * names are ignored (config typo ≠ failed backend).
+ * Diversity-aware selection. A pure global score-sort crowds out unscored
+ * engines: S2 (citations) + HF (upvotes) fill the whole papers cap and arXiv
+ * contributes zero; HN (points) fills the headline slots and gnews/rss
+ * (no score) get the scraps. The LLM makes the final quality call, so the
+ * pool it sees should represent every engine that returned items.
+ *
+ * Round-robin one item per engine per round until the cap: each engine's
+ * group is sorted score-desc internally (best item first), and each round is
+ * re-ordered score-desc so the prompt still leads with the strongest signals.
+ * Failed or unconfigured engines contribute no items and drop out naturally;
+ * a single live engine fills the whole cap (old behavior preserved).
  */
-export async function gatherSourcesDetailed(q: SourceQuery): Promise<GatherReport> {
+export function interleaveByEngine(
+  items: DigestCandidate[],
+  cap: number,
+): DigestCandidate[] {
+  if (cap <= 0) return [];
+  // Group by engine; Map iteration order = first appearance = configured
+  // engine order (free-tier baseline engines lead, add-ons follow).
+  const groups = new Map<string, DigestCandidate[]>();
+  for (const c of items) {
+    const g = groups.get(c.engine ?? '');
+    if (g) g.push(c);
+    else groups.set(c.engine ?? '', [c]);
+  }
+  for (const g of groups.values()) {
+    g.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  }
   const out: DigestCandidate[] = [];
-  const jobs: { name: string; run: Promise<boolean> }[] = [];
+  for (let round = 0; out.length < cap; round++) {
+    const picks: DigestCandidate[] = [];
+    for (const g of groups.values()) {
+      if (round < g.length) picks.push(g[round]);
+    }
+    if (!picks.length) break; // every group exhausted
+    picks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    for (const p of picks) {
+      if (out.length >= cap) break;
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Engines whose inputs are absent are skipped inside the engine itself
+ * (they return success with zero candidates — key-gated skips don't count
+ * as failures). Derive that skip list from the query alone so dormancy can
+ * be surfaced without changing any engine's signature.
+ */
+function engineSkips(q: SourceQuery): string[] {
+  const skipped: string[] = [];
   for (const engine of q.newsEngines) {
-    if (engine === 'gnews') jobs.push({ name: 'gnews', run: engineGnews(q, out) });
-    else if (engine === 'hn') jobs.push({ name: 'hn', run: engineHn(q, out) });
-    else if (engine === 'rss') jobs.push({ name: 'rss', run: engineRss(q, out) });
-    else if (engine === 'tavily') jobs.push({ name: 'tavily', run: engineTavily(q, out) });
-    else if (engine === 'exa') jobs.push({ name: 'exa', run: engineExa(q, out) });
-    else if (engine === 'jsearch') jobs.push({ name: 'jsearch', run: engineJsearch(q, out) });
+    if (engine === 'tavily' && !q.tavilyKey) skipped.push('tavily');
+    else if (engine === 'exa' && !q.exaKey) skipped.push('exa');
+    else if (engine === 'jsearch' && !q.jinaKey) skipped.push('jsearch');
+    else if (engine === 'rss' && q.rssFeeds.length === 0) skipped.push('rss');
   }
   if (q.mode !== 'news') {
     for (const engine of q.scholarEngines) {
-      if (engine === 'arxiv') jobs.push({ name: 'arxiv', run: engineArxiv(q, out) });
-      else if (engine === 'hf') jobs.push({ name: 'hf', run: engineHfPapers(out) });
-      else if (engine === 's2') jobs.push({ name: 's2', run: engineSemanticScholar(q, out) });
+      if (engine === 'arxiv' && q.arxivCats.length === 0) skipped.push('arxiv');
+    }
+  }
+  return skipped;
+}
+
+/**
+ * Same as gatherSources, plus per-engine reachability for audit warnings
+ * (review 1, P2-11: a dead engine used to degrade silently) and a skip list
+ * for not-configured engines (review 2). Unknown engine names are ignored
+ * (config typo ≠ failed backend).
+ */
+export async function gatherSourcesDetailed(q: SourceQuery): Promise<GatherReport> {
+  // Per-engine buffers: each job writes into its own array so candidates can
+  // be attributed to their engine for the diversity-aware selection below.
+  const jobs: { name: string; buf: DigestCandidate[]; run: Promise<boolean> }[] = [];
+  const spawn = (
+    name: string,
+    engine: (q: SourceQuery, out: DigestCandidate[]) => Promise<boolean>,
+  ) => {
+    const buf: DigestCandidate[] = [];
+    jobs.push({ name, buf, run: engine(q, buf) });
+  };
+  for (const engine of q.newsEngines) {
+    if (engine === 'gnews') spawn('gnews', engineGnews);
+    else if (engine === 'hn') spawn('hn', engineHn);
+    else if (engine === 'rss') spawn('rss', engineRss);
+    else if (engine === 'tavily') spawn('tavily', engineTavily);
+    else if (engine === 'exa') spawn('exa', engineExa);
+    else if (engine === 'jsearch') spawn('jsearch', engineJsearch);
+  }
+  if (q.mode !== 'news') {
+    for (const engine of q.scholarEngines) {
+      if (engine === 'arxiv') spawn('arxiv', engineArxiv);
+      else if (engine === 'hf') spawn('hf', (_q, out) => engineHfPapers(out));
+      else if (engine === 's2') spawn('s2', engineSemanticScholar);
     }
   }
   const results = await Promise.allSettled(jobs.map((j) => j.run));
   const failures = results.flatMap((r, i) =>
     r.status === 'fulfilled' && r.value === true ? [] : [jobs[i].name],
   );
+  // Engine attribution: tag each candidate with its engine (attribution only —
+  // prompts map an explicit field list, so this never reaches the LLM).
+  for (const j of jobs) {
+    for (const c of j.buf) c.engine = j.name;
+  }
+  const out = jobs.flatMap((j) => j.buf);
 
   // Dedupe: URL hash first, then fuzzy title (cross-language duplicates).
   const seenUrls = new Set<string>();
@@ -569,11 +692,11 @@ export async function gatherSourcesDetailed(q: SourceQuery): Promise<GatherRepor
     deduped.push(c);
   }
 
-  // Rank: papers by score, trending by score, then recency-ish order preserved.
-  const candidates = deduped
-    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, 12);
-  return { candidates, failures };
+  // Selection: diversity-first round-robin (see interleaveByEngine) — the
+  // old global score-sort systematically zeroed arXiv (papers) and rss
+  // (headlines) whenever a scored sibling returned a full page.
+  const candidates = interleaveByEngine(deduped, 12);
+  return { candidates, failures, skipped: engineSkips(q) };
 }
 
 /* ------------------------------------------------------------------ */
