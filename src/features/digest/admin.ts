@@ -24,7 +24,7 @@ import {
   effectiveSchedule,
 } from './config';
 import type { SlotTag } from './config';
-import { runDigestFromHour, localParts, resolveDigestType, computeSlotKey, applyRtlMarks } from './pipeline';
+import { runDigestFromHour, localParts, resolveDigestType, computeSlotKey, applyRtlMarks, appendSponsor } from './pipeline';
 import { loadPostAnalytics } from './analytics';
 import type { PostAnalytics } from './analytics';
 
@@ -183,14 +183,11 @@ async function handleDigestAction(
   const overrides = await loadSettingOverrides(env.DB);
   const cfg = resolveDigestConfig(env, undefined, overrides);
   const sponsorRaw = (cfg.sponsorText ?? '').trim();
-  let sponsorSuffix = '';
-  if (sponsorRaw) {
-    // Same contract as buildPostBody: allowlist-sanitized (named links ok),
-    // not fully escaped — a mirror kept deliberately in sync with the pipeline.
-    sponsorSuffix = `\n\n<i>${sanitizeTelegramHtml(sponsorRaw, 200)}</i>`;
-  }
-  const clean =
-    applyRtlMarks(sanitizeTelegramHtml(row.body, cfg.deepBodyLimit)) + sponsorSuffix;
+  // Same contract as the pipeline: sanitize → RTL marks, then the sponsor
+  // footer via appendSponsor (send time only, idempotent) — and the UPDATE
+  // below stores the pre-sponsor body, so retry can never double the line.
+  const base = applyRtlMarks(sanitizeTelegramHtml(row.body, cfg.deepBodyLimit));
+  const clean = appendSponsor(base, sponsorRaw);
   const sent = await sendMessageDetailed(
     env,
     /^\d+$/.test(row.target_chat_id) ? Number(row.target_chat_id) : row.target_chat_id,
@@ -203,7 +200,7 @@ async function handleDigestAction(
       `UPDATE digest_posts SET status='published', message_id=?, published_at=?, error=NULL,
               body=? WHERE id=?`,
     )
-      .bind(sent.messageId, nowIso, clean, id)
+      .bind(sent.messageId, nowIso, base, id)
       .run();
     await env.DB.prepare(
       `UPDATE digest_items SET published_at=? WHERE digest_post_id=? AND published_at IS NULL`,

@@ -12,26 +12,31 @@ import { digestAdminRoutes } from '../../../src/features/digest/admin';
 
 const DRAFT_BODY = 'مرحبا بالعالم\nSecond line <b>bold</b>';
 
-function stubDb(status = 'draft', sponsor = 'panel-sponsor') {
+function stubDb(status = 'draft', sponsor = 'panel-sponsor', body = DRAFT_BODY) {
   const row = {
     id: 5,
     slot_key: '2026-09-16T09:headlines',
     type: 'daily',
     title: 't',
-    body: DRAFT_BODY,
+    body,
     status,
     target_chat_id: '-1001',
     body_original: DRAFT_BODY,
   };
+  const binds: unknown[][] = [];
   const stmt = {
-    bind: (..._a: unknown[]) => stmt,
+    bind: (...a: unknown[]) => {
+      binds.push(a);
+      return stmt;
+    },
     first: async () => row,
     all: async () => ({ results: [{ key: 'digest_sponsor', value: sponsor }] }),
     run: async () => ({ meta: { last_row_id: 5, changes: 1 } }),
   };
   return {
     prepare: (_sql: string) => stmt,
-  } as unknown as D1Database;
+    binds,
+  } as unknown as D1Database & { binds: unknown[][] };
 }
 
 describe('panel manual publish matches the pipeline contract', () => {
@@ -101,6 +106,33 @@ describe('panel manual publish matches the pipeline contract', () => {
     expect(sent[0]).toContain(
       '<a href="https://github.com/srcKod/modflare">Modflare</a>',
     );
+  });
+
+  it('does not double the sponsor when the stored body already ends with it', async () => {
+    const sponsorHtml =
+      'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>';
+    // Legacy row: the stored body already carries the footer (pre-fix builds
+    // baked it in at insert time). Publish must not append a second one.
+    const db = stubDb('draft', sponsorHtml, DRAFT_BODY + `\n\n<i>${sponsorHtml}</i>`);
+    const env = { DB: db } as unknown as Env;
+    const route = digestAdminRoutes.find(
+      (r) => r.method === 'POST' && r.prefix === '/api/digest/drafts',
+    );
+    const req = new Request('http://localhost/admin/api/digest/drafts/5/publish', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'fetch', Origin: 'http://localhost' },
+    });
+    const res = await route!.handler(req, env);
+    expect(res.status).toBe(200);
+    const anchor = '<a href="https://github.com/srcKod/modflare">Modflare</a>';
+    expect(sent[0].split(anchor).length - 1).toBe(1);
+    // The stored body (publish UPDATE bind) carries the legacy footer exactly
+    // once — appendSponsor never added another.
+    const pubBind = (db as unknown as { binds: unknown[][] }).binds.find(
+      (b) => b.length === 4 && b[0] === 99,
+    );
+    expect(pubBind).toBeDefined();
+    expect(String(pubBind![2]).split(anchor).length - 1).toBe(1);
   });
 });
 

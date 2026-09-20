@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPostBody } from '../../../src/features/digest/pipeline';
+import { buildPostBody, appendSponsor } from '../../../src/features/digest/pipeline';
 import {
   resolveDigestConfig,
   DIGEST_DEEP_BODY_LIMIT,
@@ -27,17 +27,20 @@ describe('buildPostBody slot-aware sanitize cap', () => {
     expect(buildPostBody(plain(5000), undefined).length).toBe(3900);
   });
 
-  it('sponsor footer is appended post-sanitize and escaped', () => {
-    const out = buildPostBody(plain(5000), 'deep', 'Sponsor & Co');
+  it('stored body carries no sponsor — the footer is send-time only', () => {
+    expect(buildPostBody(plain(100), 'deep')).not.toContain('<i>');
+  });
+
+  it('appendSponsor adds the allowlist-sanitized footer, escaping plain text', () => {
+    const out = appendSponsor(plain(5000), 'Sponsor & Co');
     const suffix = '\n\n<i>Sponsor &amp; Co</i>';
     expect(out.endsWith(suffix)).toBe(true);
     expect(out.length).toBe(5000 + suffix.length);
   });
 
-  it('sponsor footer allows a sanitized named link (allowlist, not full escape)', () => {
-    const out = buildPostBody(
+  it('appendSponsor allows a sanitized named link (allowlist, not full escape)', () => {
+    const out = appendSponsor(
       plain(100),
-      'headlines',
       'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>',
     );
     expect(out.endsWith(
@@ -45,29 +48,30 @@ describe('buildPostBody slot-aware sanitize cap', () => {
     )).toBe(true);
   });
 
-  it('sponsor footer unwraps unknown tags, drops unsafe hrefs, keeps markdown literal', () => {
-    const out = buildPostBody(
+  it('appendSponsor unwraps unknown tags, drops unsafe hrefs, keeps markdown literal', () => {
+    const out = appendSponsor(
       plain(100),
-      'headlines',
       '<script>x</script><a href="javascript:alert(1)">y</a>z [m](https://e.com)',
     );
     expect(out.endsWith('\n\n<i>xyz [m](https://e.com)</i>')).toBe(true);
   });
 
-  it('no sponsor suffix when sponsorText is empty', () => {
-    expect(buildPostBody(plain(100), 'deep', '').length).toBe(100);
-    expect(buildPostBody(plain(100), 'deep', null).length).toBe(100);
+  it('appendSponsor is idempotent and no-ops on empty', () => {
+    const once = appendSponsor(plain(100), 'Sponsor & Co');
+    expect(appendSponsor(once, 'Sponsor & Co')).toBe(once);
+    expect(appendSponsor(plain(100), '')).toBe(plain(100));
+    expect(appendSponsor(plain(100), null)).toBe(plain(100));
   });
 });
 
 describe('buildPostBody deepLimit override (cfg.deepBodyLimit)', () => {
   it('uses the passed deepLimit for deep slots (wider and tighter than the default)', () => {
-    expect(buildPostBody(plain(10000), 'deep', null, 10000).length).toBe(10000);
-    expect(buildPostBody(plain(5000), 'deep', null, 3000).length).toBe(3000);
+    expect(buildPostBody(plain(10000), 'deep', 10000).length).toBe(10000);
+    expect(buildPostBody(plain(5000), 'deep', 3000).length).toBe(3000);
   });
 
   it('the override never leaks into non-deep slots', () => {
-    expect(buildPostBody(plain(5000), 'headlines', null, 10000).length).toBe(3900);
+    expect(buildPostBody(plain(5000), 'headlines', 10000).length).toBe(3900);
   });
 });
 

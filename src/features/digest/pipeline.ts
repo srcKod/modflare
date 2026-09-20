@@ -517,30 +517,37 @@ async function loadDeepSource(
 }
 
 /** Sanitize the LLM post body, normalize breaks, apply RTL marks, then append
- *  the sponsor footer (post-sanitize, never LLM-generated). The sanitize cap
- *  is slot-aware: the deep prompt invites up to 5000 chars, so the shared
- *  3900 default used to chop deep posts mid-sentence — deep gets deepLimit
- *  (cfg.deepBodyLimit: DIGEST_DEEP_BODY_LIMIT env / digest_deep_body_limit
- *  override, default 7900 — sendMessageDetailed chunks the send, so it
- *  copes); every other slot keeps the 3900 single-post default. */
+ *  the sponsor footer is NOT part of the stored body — appendSponsor() adds
+ *  it at send time only, so the stored body, the editor and the preview never
+ *  bake the footer in and the panel publish/retry path can never double it.
+ *  The sanitize cap is slot-aware: the deep prompt invites up to 5000 chars,
+ *  so the shared 3900 default used to chop deep posts mid-sentence — deep
+ *  gets deepLimit (cfg.deepBodyLimit: DIGEST_DEEP_BODY_LIMIT env /
+ *  digest_deep_body_limit override, default 7900 — sendMessageDetailed
+ *  chunks the send, so it copes); every other slot keeps the 3900
+ *  single-post default. */
 export function buildPostBody(
   post: string,
   tag: SlotTag | undefined,
-  sponsorText?: string | null,
   deepLimit: number = DIGEST_DEEP_BODY_LIMIT,
 ): string {
   const limit = tag === 'deep' ? deepLimit : 3900;
-  let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(post, limit)));
-  if (sponsorText) {
-    // Allowlist-sanitized (same sanitizer as post bodies), not fully escaped,
-    // so the admin can set a named link: <a href="https://…">Name</a>. The
-    // field is admin-only; hrefs stay scheme-restricted (http(s)/tg), unknown
-    // tags are unwrapped, stray entities escaped, and the small cap keeps it
-    // a footer. Markdown [text](url) is NOT interpreted (body is Telegram HTML).
-    const sponsor = sanitizeTelegramHtml(sponsorText, 200);
-    body += `\n\n<i>${sponsor}</i>`;
-  }
-  return body;
+  return applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(post, limit)));
+}
+
+/** Append the allowlist-sanitized sponsor footer (send time only, never
+ *  stored — see buildPostBody). Sanitized with the same allowlist as post
+ *  bodies, not fully escaped, so the admin can set a named link:
+ *  <a href="https://…">Name</a>. The field is admin-only; hrefs stay
+ *  scheme-restricted (http(s)/tg), unknown tags are unwrapped, stray
+ *  entities escaped, and the small cap keeps it a footer. Markdown
+ *  [text](url) is NOT interpreted (bodies are Telegram HTML). Idempotent:
+ *  a body that already ends with the identical footer is left alone, so a
+ *  retry or re-publish can never double the line. */
+export function appendSponsor(body: string, sponsorText?: string | null): string {
+  if (!sponsorText) return body;
+  const suffix = `\n\n<i>${sanitizeTelegramHtml(sponsorText, 200)}</i>`;
+  return body.endsWith(suffix) ? body : body + suffix;
 }
 
 export async function runDigest(
@@ -822,12 +829,13 @@ export async function runDigest(
     return;
   }
 
-  // Sanitize + sponsor footer via buildPostBody — slot-aware sanitize cap
-  // (deep posts run to 5000 chars per the deep prompt; the old fixed 3900
-  // default truncated them mid-sentence), breaks normalized (models vary
-  // between \n and \n\n — the channel post must not inherit that), RTL marks
-  // last: every stored/rendered form of the body is consistent.
-  let body = buildPostBody(parsed.post, slot?.tag, cfg.sponsorText, cfg.deepBodyLimit);
+  // Sanitize via buildPostBody — slot-aware sanitize cap (deep posts run to
+  // 5000 chars per the deep prompt; the old fixed 3900 default truncated them
+  // mid-sentence), breaks normalized (models vary between \n and \n\n — the
+  // channel post must not inherit that), RTL marks last. The stored body
+  // carries NO sponsor: appendSponsor adds the footer at send time only, so
+  // the panel publish/retry path (which appends too) can never double it.
+  let body = buildPostBody(parsed.post, slot?.tag, cfg.deepBodyLimit);
 
   const provider = cfg.llm.baseUrl;
   const insert = await db
@@ -907,7 +915,7 @@ export async function runDigest(
   const sent: SendResult = await sendMessageDetailed(
     env,
     Number(cfg.targetChatId),
-    body,
+    appendSponsor(body, cfg.sponsorText),
     { parseMode: 'HTML', disablePreview: true },
   );
   if (sent.ok && sent.messageId) {

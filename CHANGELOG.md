@@ -69,7 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   http(s)/tg hrefs) instead of fully escaped, so the `digest_sponsor`
   setting accepts inline HTML like
   `Brought to you by <a href="https://…">Name</a>`. Plain text still works;
-  markdown `[text](url)` is not interpreted.
+  markdown `[text](url)` is not interpreted. The footer is appended at send
+  time only — stored draft bodies never contain it, and appending the
+  identical footer twice is a no-op — so panel publish/retry can no longer
+  double the sponsor line.
 
 ### Fixed
 

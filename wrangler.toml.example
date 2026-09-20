@@ -210,7 +210,7 @@ NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
 # NEWS_DRAFT_TTL_DAYS = "7"
 # NEWS_ENABLE_WEEKLY = "true"       # weekly roundup (NEWS_WEEKLY_DAY, default Sunday)
 # NEWS_ENABLE_MONTHLY = "true"      # monthly deep dive (NEWS_MONTHLY_DAY, default 1)
-# NEWS_SPONSOR_TEXT = "Brought to you by ..."   # appended post-sanitize, never LLM-generated
+NEWS_SPONSOR_TEXT = 'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>'   # appended post-sanitize, never LLM-generated
 # DIGEST_DEEP_BODY_LIMIT = "7900"  # deep-slot post-body cap in chars (clamped 1000-20000;
                                   # other slots cap at 3900). The deep prompt invites ~5000-char
                                   # posts — lower values truncate them mid-sentence again.
