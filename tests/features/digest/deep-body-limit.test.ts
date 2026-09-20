@@ -34,6 +34,26 @@ describe('buildPostBody slot-aware sanitize cap', () => {
     expect(out.length).toBe(5000 + suffix.length);
   });
 
+  it('sponsor footer allows a sanitized named link (allowlist, not full escape)', () => {
+    const out = buildPostBody(
+      plain(100),
+      'headlines',
+      'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>',
+    );
+    expect(out.endsWith(
+      '\n\n<i>Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a></i>',
+    )).toBe(true);
+  });
+
+  it('sponsor footer unwraps unknown tags, drops unsafe hrefs, keeps markdown literal', () => {
+    const out = buildPostBody(
+      plain(100),
+      'headlines',
+      '<script>x</script><a href="javascript:alert(1)">y</a>z [m](https://e.com)',
+    );
+    expect(out.endsWith('\n\n<i>xyz [m](https://e.com)</i>')).toBe(true);
+  });
+
   it('no sponsor suffix when sponsorText is empty', () => {
     expect(buildPostBody(plain(100), 'deep', '').length).toBe(100);
     expect(buildPostBody(plain(100), 'deep', null).length).toBe(100);

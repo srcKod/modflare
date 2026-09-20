@@ -12,7 +12,7 @@ import { digestAdminRoutes } from '../../../src/features/digest/admin';
 
 const DRAFT_BODY = 'مرحبا بالعالم\nSecond line <b>bold</b>';
 
-function stubDb(status = 'draft') {
+function stubDb(status = 'draft', sponsor = 'panel-sponsor') {
   const row = {
     id: 5,
     slot_key: '2026-09-16T09:headlines',
@@ -26,7 +26,7 @@ function stubDb(status = 'draft') {
   const stmt = {
     bind: (..._a: unknown[]) => stmt,
     first: async () => row,
-    all: async () => ({ results: [{ key: 'digest_sponsor', value: 'panel-sponsor' }] }),
+    all: async () => ({ results: [{ key: 'digest_sponsor', value: sponsor }] }),
     run: async () => ({ meta: { last_row_id: 5, changes: 1 } }),
   };
   return {
@@ -83,6 +83,24 @@ describe('panel manual publish matches the pipeline contract', () => {
     // Sponsor comes from the settings override, not the env var.
     expect(sent[0]).toContain('panel-sponsor');
     expect(sent[0]).not.toContain('env-sponsor-must-not-appear');
+  });
+
+  it('renders a named link from an HTML sponsor (sanitized, not escaped)', async () => {
+    const env = {
+      DB: stubDb('draft', 'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>'),
+    } as unknown as Env;
+    const route = digestAdminRoutes.find(
+      (r) => r.method === 'POST' && r.prefix === '/api/digest/drafts',
+    );
+    const req = new Request('http://localhost/admin/api/digest/drafts/5/publish', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'fetch', Origin: 'http://localhost' },
+    });
+    const res = await route!.handler(req, env);
+    expect(res.status).toBe(200);
+    expect(sent[0]).toContain(
+      '<a href="https://github.com/srcKod/modflare">Modflare</a>',
+    );
   });
 });
 

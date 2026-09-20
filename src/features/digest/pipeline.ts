@@ -532,10 +532,12 @@ export function buildPostBody(
   const limit = tag === 'deep' ? deepLimit : 3900;
   let body = applyRtlMarks(normalizeBreaks(sanitizeTelegramHtml(post, limit)));
   if (sponsorText) {
-    const sponsor = sponsorText
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    // Allowlist-sanitized (same sanitizer as post bodies), not fully escaped,
+    // so the admin can set a named link: <a href="https://…">Name</a>. The
+    // field is admin-only; hrefs stay scheme-restricted (http(s)/tg), unknown
+    // tags are unwrapped, stray entities escaped, and the small cap keeps it
+    // a footer. Markdown [text](url) is NOT interpreted (body is Telegram HTML).
+    const sponsor = sanitizeTelegramHtml(sponsorText, 200);
     body += `\n\n<i>${sponsor}</i>`;
   }
   return body;

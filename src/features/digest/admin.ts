@@ -185,13 +185,9 @@ async function handleDigestAction(
   const sponsorRaw = (cfg.sponsorText ?? '').trim();
   let sponsorSuffix = '';
   if (sponsorRaw) {
-    sponsorSuffix =
-      '\n\n<i>' +
-      sponsorRaw
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;') +
-      '</i>';
+    // Same contract as buildPostBody: allowlist-sanitized (named links ok),
+    // not fully escaped — a mirror kept deliberately in sync with the pipeline.
+    sponsorSuffix = `\n\n<i>${sanitizeTelegramHtml(sponsorRaw, 200)}</i>`;
   }
   const clean =
     applyRtlMarks(sanitizeTelegramHtml(row.body, cfg.deepBodyLimit)) + sponsorSuffix;

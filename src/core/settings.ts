@@ -209,7 +209,10 @@ export const SETTING_DEFS: SettingDef[] = [
     label: 'Digest sponsor footer',
     description:
       'Optional footer line appended post-sanitize (never LLM-generated). Empty = no footer. ' +
-      'Shadows NEWS_SPONSOR_TEXT.',
+      'Plain text or inline Telegram HTML from the post-body allowlist ' +
+      '(b/i/u/s/a/code/pre/blockquote; link hrefs must be http(s) or tg), e.g. ' +
+      'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>. ' +
+      'Markdown [text](url) is not interpreted. Shadows NEWS_SPONSOR_TEXT.',
     kind: 'string',
     envVar: 'NEWS_SPONSOR_TEXT',
     default: '',

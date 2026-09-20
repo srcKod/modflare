@@ -64,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Engines that fail or lack a required key contribute nothing and drop out
   naturally; skipped-by-configuration engines surface as an
   `engines_not_configured` audit entry with a set-this-variable hint.
+- **Sponsor footer supports named links**: the footer is sanitized with the
+  same tag allowlist as post bodies (b/i/u/s/a/code/pre/blockquote,
+  http(s)/tg hrefs) instead of fully escaped, so the `digest_sponsor`
+  setting accepts inline HTML like
+  `Brought to you by <a href="https://…">Name</a>`. Plain text still works;
+  markdown `[text](url)` is not interpreted.
 
 ### Fixed
 
