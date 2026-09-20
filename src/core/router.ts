@@ -40,8 +40,10 @@ export interface UpdateRoute {
 /** A panel API route, mounted under the admin panel path (auth enforced). */
 export interface AdminRoute {
   method: 'GET' | 'POST';
-  /** Path relative to the panel base, e.g. '/api/logs'. */
-  rest: string;
+  /** Exact path relative to the panel base, e.g. '/api/logs'. */
+  rest?: string;
+  /** Prefix match for parameterized paths — the handler parses the rest. */
+  prefix?: string;
   handler: (request: Request, env: Env) => Promise<Response>;
 }
 
@@ -57,15 +59,9 @@ export interface FeatureManifest {
 export function updateKind(update: TelegramUpdate): UpdateKind | null {
   if (update.message) return 'message';
   if (update.edited_message) return 'edited_message';
-  if (
-    'message_reaction' in update &&
-    (update as Record<string, unknown>).message_reaction
-  )
-    return 'message_reaction';
-  if (
-    'message_reaction_count' in update &&
-    (update as Record<string, unknown>).message_reaction_count
-  )
+  const rec = update as unknown as Record<string, unknown>;
+  if ('message_reaction' in rec && rec.message_reaction) return 'message_reaction';
+  if ('message_reaction_count' in rec && rec.message_reaction_count)
     return 'message_reaction_count';
   return null;
 }

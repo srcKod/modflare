@@ -121,6 +121,106 @@ LOG_LEVEL = "debug"
 LOG_RETENTION_DAYS = "30"
 LOG_ENABLED = "true"
 
+# ---------------------------------------------------------------------------
+# News digest (FEATURE_PLAN.md). Cron gate "0 * * * *" in [triggers] below;
+# src/features/digest/pipeline.ts resolves the content type per gate tick.
+# ---------------------------------------------------------------------------
+ENABLE_NEWS_DIGEST = "true"
+NEWS_DOMAIN = "tech"                # preset: tech | finance | science | health
+                                     # (`tech` spans western + Chinese sources)
+                                     # | custom (free-form, see NEWS_TOPICS below)
+                                     # | round-robin (alias: all) | random
+# Rotation (one preset per daily slot, recorded in the post's domain):
+#   round-robin (alias: all) — cycle tech -> finance -> science -> health
+#   random — deterministic slot-keyed pick (retry-safe)
+#   NOTE: the `deep` slot does not rotate — it analyzes today's already-
+#   published items (whatever domains the day produced), so it takes no
+#   rotation turn, consumes no cursor position, and stays unlabeled under
+#   rotation. (Fixed-domain deploys label the deep post with their domain.)
+# NEWS_DOMAIN = "round-robin"
+NEWS_MODE = "both"                  # news | papers | both
+NEWS_TARGET_CHAT_ID = "-100XXXXXXXXXX"  # channel/group id; bot must be an admin there
+# NEWS_TARGET_CHAT_NAME = "My Channel"  # static display name for confirms/headers (unset = show the id)
+NEWS_LANGUAGE = "Arabic"
+NEWS_DIALECT = "Standard"           # optional dialect hint
+NEWS_AUTO_PUBLISH = "true"          # false = store drafts for review in the Digest tab
+ENABLE_POST_ANALYTICS = "true"      # needs --reactions on set-webhook (allowed_updates)
+NEWS_MAX_ITEMS = "5"
+NEWS_MIN_POINTS = "25"              # HN quality threshold
+NEWS_FETCH_FULLTEXT = "false"       # enrich top items with extracted page text
+NEWS_EXTRACT_MAX_PER_RUN = "4"      # cost guard: max extractions per run
+# Intraday schedule (plan §23.6): CSV of `hour:tag` slots that drive the hourly
+# gate. Each slot pins its own engines + LLM mode + token budget and tags its
+# slot key, so a single day can run several digests. Hours are local (TIMEZONE).
+# This is the SINGLE source of digest timing — unset means the digest does not
+# run (the gate logs a daily warning). Weekly/monthly rollups fire at the
+# earliest scheduled hour. Each `tag`:
+#   headlines -> gnews(+en & zh locales) + hn + rss + tavily/exa/jsearch (if keys set)
+#   papers    -> arxiv + hf + s2
+#   trending  -> hn (topic-agnostic match-all)
+#   deep      -> D1 deep-dive over today's published items (no fetching; richer
+#                prompt + 5000-token budget; schedule it AFTER headlines)
+# NEWS_SCHEDULE = "9:headlines,14:papers,20:trending,22:deep"
+# Digest LLM profile (DIGEST_MODEL -> TEXT_MODEL -> MODEL_NAME fallback).
+# Current production pick: flash-lite class via the gateway (Arabic output
+# quality + latency at a fraction of the neuron cost). The multimodal gemma
+# model remains a valid explicit alternative for image-heavy needs:
+# DIGEST_MODEL = "google-ai-studio/gemini-3.5-flash-lite"
+# DIGEST_MODEL = "workers-ai/@cf/google/gemma-4-26b-a4b-it"
+# DIGEST_BASE_URL / DIGEST_API_KEY -> run the digest on its own LLM provider
+#   (falls back to OPENAI_BASE_URL / OPENAI_API_KEY). DIGEST_MODEL /
+#   DIGEST_RESPONSE_FORMAT / DIGEST_TIMEOUT_MS likewise. DIGEST_EXTRA_BODY_JSON
+#   does NOT fall back to the moderation one: provider payloads are not
+#   portable (Workers AI `chat_template_kwargs` is a 400 on google-ai-studio).
+#   Leave it unset unless the digest provider needs its own body tweaks.
+# NEWS_ENGINE = "gnews"             # news: gnews | hn | rss | tavily | exa | jsearch; scholar: arxiv | hf | s2 (default: preset chain)
+# Secrets (set via `wrangler secret put`, never committed):
+#   JINA_API_KEY        — Reader extraction fallback (500 RPM keyed, JSON mode)
+#                         AND the `jsearch` engine (s.jina.ai). WARNING: each
+#                         search request costs a FIXED ~10,000 tokens against
+#                         the shared 10M-token free pool (~1,000 searches total).
+#   LLAMAINDEX_APIKEY   — LlamaParse documents/PDF extraction (10K credits free,
+#                         Fast tier 1 credit/page). Only used for .pdf URLs.
+#   S2_API_KEY          — Semantic Scholar key (free on request,
+#                         semanticscholar.org/product/api#api-key-form). Lifts the
+#                         anonymous 429s; unset = keyless best-effort.
+#   NEWS_RSS_FEEDS — explicit publisher RSS URLs for the `rss` engine; REPLACES
+#   the preset feed list. The custom preset ships NONE, so this is the main
+#   free lever for giving custom real sources (title+description feed the
+#   candidate pool; the LLM translates to the digest language). Examples:
+# NEWS_RSS_FEEDS = "https://feeds.bbci.co.uk/arabic/rss.xml, https://www.aljazeera.com/xml/rss/all.xml"
+# NEWS_RSS_FEEDS = "https://variety.com/feed/, https://www.billboard.com/feed/"
+#   NEWS_GNEWS_LOCALE — Google News hl/gl/ceid locale params for the `gnews`
+#   engine; REPLACES the preset locale (custom preset is en-US only).
+#   Comma-separated list = one fetch per locale, merged + deduped. This is the
+#   lever for Arabic-language Google News sourcing:
+# NEWS_GNEWS_LOCALE = "hl=ar&gl=EG&ceid=EG:ar"
+#   Two locales: "hl=ar&gl=EG&ceid=EG:ar,hl=en-US&gl=US&ceid=US:en"
+# NEWS_TOPICS = "artificial intelligence, developer tools"
+#   REQUIRED when NEWS_DOMAIN=custom: custom is the free-form domain — it
+#   ships no topics of its own, so set any comma-separated subject list here
+#   (e.g. "quantum computing, photonics job market"). Runs with custom + no
+#   topics log a custom_no_topics warning and gather match-all mush instead
+#   of anything topical. Refine further with NEWS_ENGINE /
+#   NEWS_ARXIV_CATEGORIES / NEWS_RSS_FEEDS / NEWS_GNEWS_LOCALE /
+#   NEWS_INCLUDE_DOMAINS below.
+# NEWS_ARXIV_CATEGORIES = "cs.AI,cs.CL"
+# NEWS_INCLUDE_DOMAINS = "arstechnica.com, theverge.com"
+# NEWS_DRAFT_NOTIFY_CHAT_ID = "-100XXXXXXXXXX"  # unset -> DM every ADMIN_USER_IDS
+# NEWS_DRAFT_TTL_DAYS = "7"
+# NEWS_ENABLE_WEEKLY = "true"       # weekly roundup (NEWS_WEEKLY_DAY, default Sunday)
+# NEWS_ENABLE_MONTHLY = "true"      # monthly deep dive (NEWS_MONTHLY_DAY, default 1)
+NEWS_SPONSOR_TEXT = 'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>'   # appended post-sanitize, never LLM-generated
+# DIGEST_DEEP_BODY_LIMIT = "7900"  # deep-slot post-body cap in chars (clamped 1000-20000;
+                                  # other slots cap at 3900). The deep prompt invites ~5000-char
+                                  # posts — lower values truncate them mid-sentence again.
+# Dev-only: 'true' enables POST /api/digest/dev/seed — runs the REAL pipeline
+# (engines → extraction → LLM → draft row) from a chosen local hour + slot tag,
+# so a test draft mirrors exactly what a cron tick at that slot would post.
+# Result lands in Pending drafts for review/edit/publish/discard.
+# Consumes real API quota — NEVER enable in production (endpoint 404s there).
+# NEWS_DEV_SEED = "true"
+
 [[d1_databases]]
 binding = "DB"
 database_id = "<D1-Database-ID>"
@@ -136,7 +236,9 @@ migrations_dir = "migrations"
 #                 04:00 UTC = 07:00 Asia/Baghdad (UTC+3) in winter; the
 #                 prune itself is timezone-agnostic.
 [triggers]
-crons = ["*/10 * * * *", "0 4 * * *"]
+#   0 * * * *     news digest gate (ENABLE_NEWS_DIGEST): resolves the content
+#                 type (daily/weekly/monthly) and publishes or stores a draft.
+crons = ["*/10 * * * *", "0 * * * *", "0 4 * * *"]
 
 # ---------------------------------------------------------------------------
 # Module rules: admin panel static assets.

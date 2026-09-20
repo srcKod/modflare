@@ -15,6 +15,46 @@ function esc(s){return (s==null?'':String(s))
   .replace(/"/g,'&quot;');}
 function badge(kind,label){return '<span class="badge '+kind+'">'+esc(label)+'</span>';}
 function levelBadge(l){return badge(l, l||'—');}
+/* Panel display timezone: the worker stores UTC everywhere; times render in
+   the worker's TIMEZONE (e.g. Asia/Baghdad) so the panel matches the digest
+   schedule. Served by /api/digest/settings, cached after the first load. */
+let PANEL_TZ='UTC';
+function fmtT(iso){
+  const ms=Date.parse(iso||'');
+  if(isNaN(ms))return '—';
+  try{
+    const f=new Intl.DateTimeFormat('en-CA',{timeZone:PANEL_TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    const g=t=>f.formatToParts(new Date(ms)).find(p=>p.type===t)?.value??'';
+    return `${g('year')}-${g('month')}-${g('day')} ${g('hour')}:${g('minute')}`;
+  }catch{return String(iso).replace('T',' ').replace('Z','');}
+}
+/** Short GMT offset for header labels (Asia/Baghdad -> GMT+3). */
+function tzLabel(){
+  try{
+    const s=new Date().toLocaleString('en',{timeZone:PANEL_TZ,timeZoneName:'shortOffset'});
+    const m=/GMT([+-]\d+)/.exec(s);
+    return m?'GMT'+m[1]:PANEL_TZ;
+  }catch{return PANEL_TZ;}
+}
+/** Stamp the offset onto the time-column headers once the zone is known. */
+function labelTzHeaders(){
+  const lab=tzLabel();
+  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt+' ('+lab+')';};
+  set('th-ts','Time');set('th-sent','Sent');set('th-run','Run');set('th-pub','Published');
+}
+let tzPromise=null;
+function ensureTz(){
+  if(!tzPromise){
+    tzPromise=(async()=>{
+      try{
+        const r=await dgGet('/api/digest/settings');
+        if(r.ok){const s=await r.json();if(s.timezone)PANEL_TZ=s.timezone;}
+      }catch{}
+      labelTzHeaders();
+    })();
+  }
+  return tzPromise;
+}
 function decisionBadge(d){return d==='delete'?badge('delete','delete')
   :d==='keep'?badge('keep','keep'):'<span class="mono">—</span>';}
 /**
@@ -94,7 +134,7 @@ function idCell(handle, name, id){
  */
 function detailsBody(row){
   const v=x=>x==null||x===''?'—':x;
-  const fmtTs=(row.ts||'').replace('T',' ').replace('Z','');
+  const fmtTs=fmtT(row.ts);
   const parts=[
     // 1 — metadata bar: ts + id
     '<div class="d-meta">'+
@@ -133,6 +173,15 @@ function detailsBody(row){
   if(row.message_text) parts.push('<div class="d-bubble">'+esc(row.message_text)+'</div>');
   // 5 — reason line
   if(row.reason) parts.push('<div class="d-why">'+esc(row.reason)+'</div>');
+  // 5b — structured detail (slot, engines, hints, post ids…): the audit
+  // trail stores machine context in `extra`, and without rendering it a
+  // warning like engines_failed shows a bare code with no actionable detail.
+  if(row.extra){
+    let det=null;
+    try{ det=typeof row.extra==='string'?JSON.parse(row.extra):row.extra; }catch{}
+    if(det&&typeof det==='object'&&!Array.isArray(det)) parts.push(kvTable(det));
+    else if(det!=null&&det!=='') parts.push('<div class="d-why">'+esc(String(det))+'</div>');
+  }
   // 6 — LLM verdict + fun_response
   if(row.llm_response){
     let parsed=null;
@@ -186,6 +235,7 @@ async function loadEvents(){
   for(const e of evts){const o=document.createElement('option');o.value=e;o.textContent=e;sel.appendChild(o);}
 }
 async function loadRows(){
+  await ensureTz();
   const p=qs(); p.set('page',page); p.set('per_page',perPage);
   const r=await fetch(base+'/api/logs?'+p);
   const tbody=document.getElementById('rows');
@@ -197,7 +247,7 @@ async function loadRows(){
       const chat=idCell(row.chat_username, row.chat_title, row.chat_id);
       const user=idCell(row.username, row.full_name, row.user_id);
       return '<tr data-i="'+i+'">'+
-        '<td class="mono">'+esc((row.ts||'').replace('T',' ').replace('Z',''))+'</td>'+
+        '<td class="mono">'+esc(fmtT(row.ts))+'</td>'+
         '<td>'+levelBadge(row.level)+'</td>'+
         '<td>'+esc(row.event)+'</td>'+
         '<td>'+chat+'</td>'+
@@ -266,6 +316,11 @@ document.querySelectorAll('th[data-k]').forEach(th=>{
 ['f-level','f-event','f-decision','f-chat','f-user','f-from','f-to','f-q'].forEach(id=>{
   document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')apply();});
 });
+// Discrete selects reload immediately (same as the digest/bot-queue tabs);
+// text/date inputs keep Enter-to-apply so typing never fires loads.
+['f-level','f-event','f-decision'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',apply);
+});
 
 /* ---- Bot queue tab ---- */
 /** Human-short age of an ISO timestamp: <1m / 42m / 3h 12m / 2d 5h. */
@@ -280,6 +335,7 @@ function ageStr(iso){
   return Math.floor(h/24)+'d '+(h%24)+'h';
 }
 async function loadQueue(){
+  await ensureTz();
   const tbody=document.getElementById('bq-rows');
   const notice=document.getElementById('bq-notice');
   const kind=document.getElementById('bq-kind').value;
@@ -307,7 +363,7 @@ async function loadQueue(){
       '<td>'+idCell(row.chat_username,null,row.chat_id)+'</td>'+
       '<td class="bq-msg"><div class="reason">'+esc(row.message)+'</div></td>'+
       '<td><span class="badge bq-kind-'+esc(row.kind)+'">'+esc(row.kind)+'</span></td>'+
-      '<td class="mono">'+esc((row.sent_at||'').replace('T',' ').replace('Z',''))+'</td>'+
+      '<td class="mono">'+esc(fmtT(row.sent_at))+'</td>'+
       '<td class="mono">'+ageStr(row.sent_at)+
         (row.eligible?' <span class="badge due">due</span>':'')+'</td>'+
       '<td class="mono">'+esc(row.attempts)+'</td>'+
@@ -318,7 +374,52 @@ document.getElementById('bq-refresh').addEventListener('click',loadQueue);
 document.getElementById('bq-kind').addEventListener('change',loadQueue);
 
 /* ---- Settings tab: runtime config overrides (generated from defs) ---- */
-async function apiPost(url,payload){
+/* ---- Digest tab: runs list, draft editor, publish/discard, stats ---- */
+let dgCurrent=null;   // full row loaded into the editor
+const DG_TAGS=['b','i','u','s','a','code','blockquote'];
+/** Render the Telegram-HTML subset safely for the preview pane. */
+function renderTgHtml(src){
+  // The textarea holds server-escaped text (&amp; etc.) — decode first so
+  // entities preview as Telegram renders them, then re-escape and unescape
+  // only the allowlisted tags (mirrors the server sanitizer).
+  let s=String(src==null?'':src)
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+    .replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+  s=esc(s);
+  // Only the allowlisted tags survive; everything else stays escaped text.
+  s=s.replace(/&lt;(\/?)(b|i|u|s|blockquote|code|strong|em)&gt;/g,(m,sl,tag)=>{
+    const map={strong:'b',em:'i'};
+    return '<'+sl+(map[tag]||tag)+'>';
+  });
+  s=s.replace(/&lt;a href=&quot;(.*?)&quot;&gt;/g,(m,url)=>{
+    const u=url.replace(/&amp;/g,'&');
+    return '<a href="'+u+'" target="_blank" rel="noopener">';
+  });
+  s=s.replace(/&lt;(\/?)a&gt;/g,'<$1a>');
+  return s;
+}
+/** Client mirror of the server normalizeBreaks: every junction becomes
+ *  exactly one empty line, so the preview matches what publish will send. */
+function normalizeBreaksJs(s){
+  const lines=String(s==null?'':s).replace(/\r\n?/g,'\n').split('\n')
+    .map(l=>l.replace(/[ \t]+$/,''));
+  let a=0;while(a<lines.length&&lines[a]==='')a++;
+  let b=lines.length;while(b>a&&lines[b-1]==='')b--;
+  return lines.slice(a,b).filter(l=>l!=='').join('\n\n');
+}
+/** Client mirror of the server applyRtlMarks (RLM per RTL line). */
+const DG_RTL_RE=/[\u0591-\u07FF\u08A0-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+function rtlMarksJs(s){
+  return String(s==null?'':s).split('\n')
+    .map(l=>DG_RTL_RE.test(l)?'\u200F'+l:l).join('\n');
+}
+function typeBadge(t){return '<span class="badge dg-type-'+esc(t||'daily')+'">'+esc(t||'daily')+'</span>';}
+function statusBadge(st){
+  const cls={published:'keep',draft:'info',failed:'error',discarded:'debug'}[st]||'debug';
+  return badge(cls,st);
+}
+// Shared POST helper for the digest + settings APIs (single definition).
+async function dgPost(url,payload){
   return fetch(base+url,{
     method:'POST',
     headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},
@@ -341,7 +442,9 @@ async function loadSettings(){
       const v=byKey[def.key]||{value:'',source:'default'};
       const input=def.kind==='boolean'
         ?'<input type="checkbox" data-key="'+esc(def.key)+'"'+(v.value==='true'?' checked':'')+'>'
-        :'<input type="text" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:240px">';
+        :def.kind==='number'
+          ?'<input type="number" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:90px" title="'+esc(def.description||'')+'">'
+          :'<input type="text" data-key="'+esc(def.key)+'" value="'+esc(v.value)+'" style="width:340px" title="'+esc(def.description||'')+'">';
       const src='<span class="badge'+(v.source==='override'?' due':'')+'">'+esc(v.source)+'</span>';
       const reset='<button class="st-reset" data-key="'+esc(def.key)+'"'+(v.source==='override'?'':' disabled')+' title="Delete the override; the env/default value applies again">Reset</button>';
       return '<tr>'+
@@ -356,7 +459,7 @@ async function loadSettings(){
         const key=inp.getAttribute('data-key');
         const value=inp.type==='checkbox'?String(inp.checked):inp.value;
         try{
-          const r=await apiPost('/api/settings',{key,value});
+          const r=await dgPost('/api/settings',{key,value});
           const d=await r.json().catch(()=>({}));
           if(r.ok){loadSettings();}
           else{alert('Save failed: '+(d.error||('HTTP '+r.status)));}
@@ -367,7 +470,7 @@ async function loadSettings(){
       btn.addEventListener('click',async()=>{
         const key=btn.getAttribute('data-key');
         try{
-          const r=await apiPost('/api/settings/reset',{key});
+          const r=await dgPost('/api/settings/reset',{key});
           const d=await r.json().catch(()=>({}));
           if(r.ok){loadSettings();}
           else{alert('Reset failed: '+(d.error||('HTTP '+r.status)));}
@@ -384,16 +487,364 @@ document.getElementById('st-refresh').addEventListener('click',loadSettings);
 /* ---- Tabs: audit (default) | bot-queue | settings, deep-linked via ?tab= ---- */
 function currentTab(){
   const t=new URLSearchParams(location.search).get('tab');
-  return t==='bot-queue'||t==='settings'?t:'audit';
+  return t==='bot-queue'||t==='settings'||t==='digest'?t:'audit';
 }
+/* ---- Digest toast + loading UX (§23.5) ---- */
+function dgToast(msg,kind){
+  const host=document.getElementById('dg-toast-host');
+  if(!host)return;
+  const t=document.createElement('div');
+  t.className='dg-toast dg-toast-'+(kind||'ok');
+  t.textContent=msg;
+  host.appendChild(t);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>t.classList.add('dg-toast-show')));
+  const ms=kind==='err'?5000:3000;
+  setTimeout(()=>{
+    t.classList.remove('dg-toast-show');
+    t.classList.add('dg-toast-hide');
+    setTimeout(()=>t.remove(),280);
+  },ms);
+}
+// Per-button refcount. A global counter would couple the Refresh and Insert
+// buttons: seed's finally decrements the shared total while loadDigest() is
+// still counting up for Refresh, so the Insert button never returns to normal.
+const dgLoading=new WeakMap();
+function dgSetLoading(btn,on){
+  const cur=dgLoading.get(btn)||0;
+  if(on){
+    if(!btn.dataset.dgLabel)btn.dataset.dgLabel=btn.textContent;
+    dgLoading.set(btn,cur+1);
+    btn.classList.add('dg-loading');
+    btn.textContent='Working…';
+  }else{
+    const next=Math.max(0,cur-1);
+    if(next===0){
+      dgLoading.delete(btn);
+      btn.classList.remove('dg-loading');
+      if(btn.dataset.dgLabel)btn.textContent=btn.dataset.dgLabel;
+    }else{
+      dgLoading.set(btn,next);
+    }
+  }
+}
+/* Digest filter state (applies to Published server-side; drafts client-side). */
+let dgPage=1;
+const DG_PER_PAGE=20;
+function dgFilterParams(){
+  const p=new URLSearchParams();
+  const g=(id)=>document.getElementById(id).value;
+  const domain=g('dg-f-domain');if(domain&&domain!=='all')p.set('domain',domain);
+  if(g('dg-f-type'))p.set('type',g('dg-f-type'));
+  if(g('dg-f-tag'))p.set('tag',g('dg-f-tag'));
+  if(g('dg-f-from'))p.set('from',g('dg-f-from'));
+  if(g('dg-f-to'))p.set('to',g('dg-f-to'));
+  if(g('dg-f-minrx'))p.set('min_reactions',g('dg-f-minrx'));
+  if(g('dg-f-trend'))p.set('trend',g('dg-f-trend'));
+  return p;
+}
+/** GET with no-store: Refresh must never serve a cached response (§23.4). */
+async function dgGet(path){
+  return await fetch(base+path,{cache:'no-store'});
+}
+/** Emoji pills from a breakdown map, tinted by sentiment class. */
+function rxChips(breakdown,signals){
+  const entries=Object.entries(breakdown||{}).sort((a,b)=>b[1]-a[1]);
+  if(!entries.length)return '<span class="mono">0</span>';
+  return '<div class="rx-wrap">'+entries.map(([e,c])=>{
+    const cls=signals&&signals[e]==='neg'?' rx-neg':(signals&&signals[e]==='pos'?' rx-pos':'');
+    return '<span class="rx-chip'+cls+'" title="'+esc(e)+'">'+esc(e)+' '+esc(c)+'</span>';
+  }).join('')+'</div>';
+}
+/** Windowed-delta arrow + age-normalized velocity (reactions/hour). */
+function trendChip(a){
+  if(!a||a.total==null)return '<span class="mono">—</span>';
+  const map={up:'\u{1F4C8}',down:'\u{1F4C9}',flat:'➖',new:'·'};
+  const arrow=map[a.trend||'new']||'·';
+  const delta=a.trend_delta!=null&&a.trend_delta!==0
+    ?(' '+(a.trend_delta>0?'+':'')+a.trend_delta):'';
+  const cls='trend-'+(a.trend||'new');
+  return '<span class="'+cls+'" title="reactions since ~24h ago">'+arrow+esc(delta)+'</span>'+
+    (a.velocity!=null?'<div class="secondary">'+esc(a.velocity)+'/h</div>':'');
+}
+/** Flatten a settings object into key/value rows (arrays joined, nested dotted). */
+function kvRows(obj,prefix,out){
+  out=out||[];
+  for(const[k,v]of Object.entries(obj||{})){
+    const key=prefix?prefix+'.'+k:k;
+    if(v&&typeof v==='object'&&!Array.isArray(v)){kvRows(v,key,out);}
+    else if(Array.isArray(v)){out.push([key,v.length?v.join(', '):'—']);}
+    else if(v&&typeof v==='object')out.push([key,'—']);
+    else out.push([key,v==null||v===''?'—':String(v)]);
+  }
+  return out;
+}
+function kvTable(obj){
+  return '<table class="kv">'+kvRows(obj,'',[]).map(([k,v])=>
+    '<tr><td class="k">'+esc(k)+'</td><td class="v">'+esc(v)+'</td></tr>').join('')+'</table>';
+}
+function domainBadge(dm){return dm?'<span class="badge dg-domain-'+esc(dm)+'">'+esc(dm)+'</span>':'<span class="mono">—</span>';}
+/** Intraday slot tag cell (null for untagged legacy / rollup rows). */
+function slotBadge(t){return t?'<span class="badge dg-tag">'+esc(t)+'</span>':'<span class="mono">—</span>';}
+async function loadDigest(){
+  await ensureTz();
+  const notice=document.getElementById('dg-notice');
+  const btn=document.getElementById('dg-refresh');
+  const warnNotice=(msg)=>{notice.hidden=false;notice.textContent=msg;dgToast(msg,'warn');};
+  dgSetLoading(btn,true);
+  try{
+    const r=await dgGet('/api/digest/drafts');
+    if(!r.ok){warnNotice('Digest API failed ('+r.status+').');return;}
+    const d=await r.json();
+    if(!d.enabled){warnNotice('Digest is disabled (ENABLE_NEWS_DIGEST != "true").');}
+    else if(d.auto_publish){warnNotice('Auto-publish is ON — runs publish directly. Drafts below are from earlier manual/failed runs or can be created by turning auto-publish off.');}
+    else{notice.hidden=false;notice.textContent='Auto-publish is OFF — new runs are stored as drafts and must be approved here.';}
+    const drafts=(d.rows||[]).filter(x=>x.status==='draft');
+    // Failed runs surface alongside drafts with a Retry action (re-send the
+    // stored body, no LLM) — otherwise a failed send is invisible and final.
+    const failed=(d.rows||[]).filter(x=>x.status==='failed');
+    const actionable=[...drafts,...failed];
+    const f=dgFilterParams();
+    const fDomain=f.get('domain'),fType=f.get('type');
+    const shownDrafts=actionable.filter(x=>
+      (!fDomain||(x.domain||'')===fDomain)&&(!fType||x.type===fType));
+    const tbody=document.getElementById('dg-drafts');
+    if(!shownDrafts.length){
+      tbody.innerHTML='<tr class="empty"><td colspan="8">'+
+        (actionable.length?'No rows match the filters.':'No pending drafts.')+'</td></tr>';
+    }else{
+      tbody.innerHTML=shownDrafts.map(row=>'<tr>'+
+        '<td class="mono">'+esc(row.slot_key)+'</td>'+
+        '<td>'+typeBadge(row.type)+'</td>'+
+        '<td>'+domainBadge(row.domain)+'</td>'+
+        '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
+        '<td><div class="reason">'+renderTgHtml(row.preview||'')+'</div></td>'+
+        '<td class="mono">'+esc(fmtT(row.run_at))+'</td>'+
+        '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
+        (row.status==='failed'
+          ?'<td><button type="button" class="details-btn" data-dg-retry="'+row.id+'">Retry</button></td>'
+          :'<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>')+
+      '</tr>').join('');
+      tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));
+      tbody.querySelectorAll('[data-dg-retry]').forEach(b=>b.addEventListener('click',async()=>{
+        const id=Number(b.getAttribute('data-dg-retry'));
+        if(!window.confirm('Re-send failed digest #'+id+' to the channel?'))return;
+        const r=await dgPost('/api/digest/drafts/'+id+'/retry');
+        const dd=await r.json().catch(()=>({}));
+        dgToast(r.ok?'Re-sent ✓ (message '+dd.message_id+')':'Retry failed: '+(dd.error||r.status),r.ok?'ok':'warn');
+        loadDigest();
+      }));
+    }
+    // Published (filtered + paginated) via /api/digest/stats
+    const sp=new URLSearchParams(f);sp.set('page',dgPage);sp.set('per_page',DG_PER_PAGE);
+    const sr=await dgGet('/api/digest/stats?'+sp);
+    const spub=document.getElementById('dg-published');
+    const sstat=document.getElementById('dg-stats');
+    if(!sr.ok){warnNotice('Digest stats failed ('+sr.status+').');spub.innerHTML='<tr class="row-error"><td colspan="10">Failed to load.</td></tr>';return;}
+    const st=await sr.json();
+    const sm=st.summary||{};
+    sstat.innerHTML=
+      '<div class="stat"><div class="num">'+(sm.published||0)+'</div><div class="lbl">Published (filtered)</div></div>'+
+      '<div class="stat"><div class="num">'+drafts.length+'</div><div class="lbl">Pending drafts</div></div>'+
+      '<div class="stat"><div class="num">'+(sm.reactions||0)+'</div><div class="lbl">Total reactions</div></div>'+
+      '<div class="stat"><div class="num">'+((sm.pos||0)-(sm.neg||0))+'</div><div class="lbl">Net sentiment</div></div>'+
+      '<div class="stat"><div class="num" title="'+esc(sm.best&&sm.best.title||'')+'">'+(sm.best!=null?esc(sm.best.reactions):'—')+'</div><div class="lbl">Best post</div></div>';
+    // Domain filter options = union of published + draft domains (keep selection).
+    const fd=document.getElementById('dg-f-domain');
+    const sel=fd.value||'all';
+    const doms=[...new Set([...(st.domains||[]),...drafts.map(x=>x.domain).filter(Boolean)])].sort();
+    fd.innerHTML='<option value="all">domain: all</option>'+doms.map(x=>'<option>'+esc(x)+'</option>').join('');
+    if(doms.includes(sel))fd.value=sel;
+    spub.innerHTML=(st.posts||[]).length?st.posts.map(p=>{
+      const a=p.analytics;
+      return '<tr>'+
+        '<td><div class="primary">'+esc(p.title||'—')+'</div></td>'+
+        '<td>'+typeBadge(p.type)+'</td>'+
+        '<td>'+slotBadge(p.tag)+'</td>'+
+        '<td>'+domainBadge(p.domain)+'</td>'+
+        '<td class="mono">'+esc(fmtT(p.published_at))+'</td>'+
+        '<td class="mono col-rx-count">'+(a&&a.total!=null?esc(a.total):'—')+'</td>'+
+        '<td class="col-rx">'+(a&&a.breakdown?rxChips(a.breakdown,st.signal_map):'<span class="mono">—</span>')+'</td>'+
+        '<td class="mono">'+trendChip(a)+'</td>'+
+        '<td class="mono">'+esc(p.message_id||'—')+'</td>'+
+        '<td>'+(p.edited_at?'<span class="badge due">edited</span>':'—')+'</td>'+
+      '</tr>';
+    }).join(''):'<tr class="empty"><td colspan="10">Nothing published yet.</td></tr>';
+    document.getElementById('dg-page-info').textContent=
+      'Page '+dgPage+' · '+(st.posts||[]).length+' of '+st.total+(st.has_more?' (more)':'');
+    document.getElementById('dg-prev').disabled=dgPage<=1;
+    document.getElementById('dg-next').disabled=!st.has_more;
+    // Settings as readable key/value rows
+    const setr=await dgGet('/api/digest/settings');
+    if(setr.ok){
+      const settings=await setr.json();
+      document.getElementById('dg-settings').innerHTML=kvTable(settings);
+      // Hide the dev-seed controls unless the toggle is on (endpoint 04s anyway).
+      const seedWrap=document.getElementById('dg-seed-wrap');
+      if(seedWrap)seedWrap.hidden=!settings.dev_seed;
+    }
+    dgToast('Digest refreshed.','ok');
+  }catch(err){
+    const msg='Digest load failed: '+(err&&err.message||err);
+    notice.hidden=false;notice.textContent=msg;
+    dgToast(msg,'err');
+  }finally{
+    dgSetLoading(btn,false);
+  }
+}
+/* Editor */
+async function openEditor(id){
+  const r=await dgGet('/api/digest/drafts/'+id);
+  if(!r.ok){
+    let detail='';
+    try{detail=(await r.text()).slice(0,160);}catch{}
+    alert('Failed to load draft '+id+' — HTTP '+r.status+(detail?'\n'+detail:''));
+    return;
+  }
+  dgCurrent=await r.json();
+  document.getElementById('dg-editor').hidden=false;
+  renderEditorMeta();
+  setEditorDir('auto');
+  // Static display name from the row (env/panel config) — no live lookup.
+  dgCurrent._chatLabel=dgCurrent.target_name||dgCurrent.target_chat_id||'';
+  document.getElementById('dg-body').value=dgCurrent.body||'';
+  document.getElementById('dg-editor-status').textContent='';
+  updateCount();updatePreview();
+  document.getElementById('dg-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function closeEditor(){
+  document.getElementById('dg-editor').hidden=true;dgCurrent=null;
+}
+function updateCount(){
+  const v=document.getElementById('dg-body').value;
+  document.getElementById('dg-count').textContent=
+    v.length+' chars raw'+(v.length>4096?' — WILL be split into parts':'');
+}
+function updatePreview(){
+  const v=document.getElementById('dg-body').value;
+  // Preview contract: what publish will send (sanitize ≈ renderTgHtml,
+  // then the same normalize + RTL marks the server applies).
+  document.getElementById('dg-preview').innerHTML=
+    renderTgHtml(normalizeBreaksJs(rtlMarksJs(v)));
+}
+/** Editor direction (textarea + preview together) for mixed-language posts. */
+function setEditorDir(d){
+  document.getElementById('dg-body').dir=d;
+  document.getElementById('dg-preview').dir=d==='auto'?'auto':d;
+  document.querySelectorAll('[data-dg-dir]').forEach(b=>
+    b.classList.toggle('on',b.getAttribute('data-dg-dir')===d));
+}
+document.querySelectorAll('[data-dg-dir]').forEach(b=>
+  b.addEventListener('click',()=>setEditorDir(b.getAttribute('data-dg-dir'))));
+/** Title standalone; metadata as a chip row (slot + type/domain badges). */
+function renderEditorMeta(){
+  const m=dgCurrent;if(!m)return;
+  document.getElementById('dg-editor-title').textContent=m.title||'(untitled)';
+  document.getElementById('dg-editor-meta').innerHTML=
+    '<span class="mono">'+esc(m.slot_key||'')+'</span>'+
+    typeBadge(m.type)+
+    (m.domain?domainBadge(m.domain):'')+
+    '<span class="badge debug">'+esc(m.mode||'')+'</span>'+
+    (m.model?'<span class="mono">'+esc(m.model)+'</span>':'');
+}
+document.getElementById('dg-body').addEventListener('input',()=>{updateCount();updatePreview();});
+document.querySelectorAll('.dg-toolbar button[data-wrap]').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const ta=document.getElementById('dg-body');
+    const tag=b.getAttribute('data-wrap');
+    const {selectionStart:s,selectionEnd:e,value:v}=ta;
+    const sel=v.slice(s,e);
+    let ins;
+    if(tag==='a'){
+      const url=sel&&/^(https?:\/\/|tg:\/\/)/i.test(sel.trim())?sel.trim():window.prompt('Link URL (https:// or tg://)','https://');
+      if(!url)return;
+      const label=sel&&sel.trim()!==url?sel:url.replace(/^https?:\/\//,'');
+      ins='<a href="'+url+'">'+label+'</a>';
+    }else{
+      ins='<'+tag+'>'+sel+'</'+tag+'>';
+    }
+    ta.value=v.slice(0,s)+ins+v.slice(e);
+    ta.focus();ta.setSelectionRange(s+ins.length,s+ins.length);
+    updateCount();updatePreview();
+  });
+});
+document.getElementById('dg-save').addEventListener('click',async()=>{
+  if(!dgCurrent)return;
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
+  const st=document.getElementById('dg-editor-status');
+  st.textContent=r.ok?'Saved ✓':'Save failed ('+r.status+')';
+  if(r.ok)renderEditorMeta();
+});
+document.getElementById('dg-restore').addEventListener('click',()=>{
+  if(dgCurrent&&dgCurrent.body_original!=null){
+    document.getElementById('dg-body').value=dgCurrent.body_original;
+    updateCount();updatePreview();
+    document.getElementById('dg-editor-status').textContent='Restored original (not saved yet)';
+  }
+});
+document.getElementById('dg-publish').addEventListener('click',async()=>{
+  if(!dgCurrent)return;
+  const where=dgCurrent._chatLabel||dgCurrent.target_chat_id||'the channel';
+  if(!window.confirm('Publish this digest to '+where+'?'))return;
+  const sr=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/save',{body:document.getElementById('dg-body').value});
+  if(!sr.ok){document.getElementById('dg-editor-status').textContent='Save failed before publish';return;}
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/publish');
+  const st=document.getElementById('dg-editor-status');
+  const d=await r.json().catch(()=>({}));
+  st.textContent=r.ok?'Published ✓ (message '+d.message_id+')':'Publish failed: '+(d.error||r.status);
+  if(r.ok){closeEditor();loadDigest();}
+});
+document.getElementById('dg-discard').addEventListener('click',async()=>{
+  if(!dgCurrent||!window.confirm('Discard this draft?'))return;
+  const r=await dgPost('/api/digest/drafts/'+dgCurrent.id+'/discard');
+  if(r.ok){closeEditor();loadDigest();}
+});
+document.getElementById('dg-close').addEventListener('click',closeEditor);
+/* Filter bar: apply resets to page 1; Enter in inputs does the same. */
+function dgApply(){dgPage=1;loadDigest();}
+document.getElementById('dg-apply').addEventListener('click',dgApply);
+['dg-f-from','dg-f-to','dg-f-minrx'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown',e=>{if(e.key==='Enter')dgApply();});
+});
+['dg-f-domain','dg-f-type','dg-f-tag','dg-f-trend'].forEach(id=>{
+  document.getElementById(id).addEventListener('change',dgApply);
+});
+document.getElementById('dg-prev').addEventListener('click',()=>{if(dgPage>1){dgPage--;loadDigest();}});
+document.getElementById('dg-next').addEventListener('click',()=>{if(!document.getElementById('dg-next').disabled){dgPage++;loadDigest();}});
+document.getElementById('dg-refresh').addEventListener('click',()=>{
+  closeEditor();   // a stale editor open across a refresh shows old state (§23.4)
+  loadDigest();
+});
+// Dev-only: run the REAL pipeline for the chosen local hour + tag and save the
+// result as a draft so the review/edit/publish/discard workflow is exercised
+// exactly as a cron tick would. Gated server-side by NEWS_DEV_SEED — returns
+// 404 in production.
+document.getElementById('dg-seed').addEventListener('click',async()=>{
+  const hour=parseInt(document.getElementById('dg-seed-hour').value,10);
+  const tag=document.getElementById('dg-seed-tag').value;
+  if(!window.confirm('Run the real pipeline for '+tag+' @ '+String(hour).padStart(2,'0')+
+    ' (engines + extraction + LLM + draft)? This consumes real API quota.'))return;
+  const btn=document.getElementById('dg-seed');
+  dgSetLoading(btn,true);
+  try{
+    const r=await dgPost('/api/digest/dev/seed',{hour,tag});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){dgToast('Draft for slot '+d.slot_key+' saved — check Pending drafts.','ok');loadDigest();}
+    else{const m=d.error||('Failed ('+r.status+')');dgToast(m,'err');}
+  }catch(err){dgToast('Seed failed: '+(err&&err.message||err),'err');}
+  finally{dgSetLoading(btn,false);}
+});
+
+/* ---- Tabs: audit (default) | bot-queue | digest | settings, deep-linked via ?tab= ---- */
 function showTab(t){
   document.getElementById('tab-audit').hidden=(t!=='audit');
   document.getElementById('tab-bot-queue').hidden=(t!=='bot-queue');
+  document.getElementById('tab-digest').hidden=(t!=='digest');
   document.getElementById('tab-settings').hidden=(t!=='settings');
   document.querySelectorAll('.tab').forEach(a=>{
     a.classList.toggle('active',a.getAttribute('data-tab')===t);
   });
   if(t==='bot-queue'){loadQueue();}
+  else if(t==='digest'){loadDigest();}
   else if(t==='settings'){loadSettings();}
   else{loadStats();loadRows();}
 }

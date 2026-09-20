@@ -16,6 +16,17 @@ OPENAI_API_KEY=sk-or-v1-your-key-here
 # ADMIN_PANEL_PATH in wrangler.toml). Keep it strong.
 # ADMIN_PANEL_TOKEN=your-strong-random-token
 
+# --- News digest (optional; the zero-key default path needs NONE of these) ---
+# Tavily Search API (https://tavily.com) — enables NEWS_ENGINE=tavily (1,000 free credits/mo)
+# TAVILY_API_KEY=tvly-...
+# Exa API (https://exa.ai) — enables NEWS_ENGINE=exa ($10/mo free credits)
+# EXA_API_KEY=...
+# Jina Reader (https://jina.ai/reader) — raises the fallback article extractor above keyless limits
+# JINA_API_KEY=...
+# Run the digest on a different LLM provider (e.g. Zhipu BigModel's free GLM):
+# DIGEST_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+# DIGEST_API_KEY=...
+
 # Optional: worker URL used by `npm run rotate-token` when no URL argument is
 # passed (defaults to https://telegram-mod-bot.livenet123.workers.dev).
 # WORKER_URL=https://telegram-mod-bot.<your-subdomain>.workers.dev

@@ -1,0 +1,856 @@
+/**
+ * Pluggable source engines for content gathering (news + scholarly).
+ *
+ * Each engine appends normalized candidates; `gatherSources` orchestrates the
+ * engine chain (per mode + engine list), applies the trusted-domain allowlist,
+ * dedupes (URL hash + fuzzy title), and optionally pulls full text for thin
+ * items (native fetch/HTMLRewriter with a Jina Reader fallback).
+ *
+ * Reusable by any feature that needs curated web/paper candidates.
+ */
+
+import { fetchWithTimeout } from '../core/fetch';
+import { decodeEntities } from './telegram-html';
+
+export type CandidateTag = 'headlines' | 'trending' | 'papers' | 'segment';
+
+export interface DigestCandidate {
+  tag: CandidateTag;
+  title: string;
+  url: string;
+  source: string;
+  date?: string;
+  snippet?: string;
+  score?: number; // engine signal (points/upvotes) — ranking hint only
+  /** Engine that produced the candidate (attribution for the diversity-aware
+   *  selection pass; set by gatherSourcesDetailed, never reaches LLM prompts,
+   *  which map an explicit field list). */
+  engine?: string;
+}
+
+/**
+ * What a source-gathering run needs. Structurally satisfied by the digest
+ * feature's resolved config; keeps this module independent of any feature.
+ */
+export interface SourceQuery {
+  mode: 'news' | 'papers' | 'both';
+  newsEngines: string[];
+  scholarEngines: string[];
+  topics: string[];
+  includeDomains: string[];
+  minPoints: number;
+  arxivCats: string[];
+  gnewsLocale: string;
+  rssFeeds: string[];
+  maxItems: number;
+  fetchFulltext: boolean;
+  tavilyKey?: string;
+  exaKey?: string;
+  jinaKey?: string;
+  llamaKey?: string;
+  s2Key?: string;
+}
+
+
+/* ------------------------------------------------------------------ */
+/* Small helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+function stripCdata(s: string): string {
+  return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
+}
+
+function tagText(block: string, tag: string): string {
+  const m = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'i').exec(block);
+  return m ? decodeEntities(stripCdata(m[1])).trim() : '';
+}
+
+export function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+export async function sha256Hex(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Normalize a URL for hashing: strip protocol, www, query, fragment, slash. */
+export function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return url;
+  }
+}
+
+function normalizeTitle(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+/** Jaccard similarity of token sets — cheap cross-language title dedupe. */
+function titleSimilarity(a: string, b: string): number {
+  const A = new Set(normalizeTitle(a).split(' ').filter((t) => t.length > 1));
+  const B = new Set(normalizeTitle(b).split(' ').filter((t) => t.length > 1));
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+
+function inAllowlist(url: string, allow: string[]): boolean {
+  if (!allow.length) return true;
+  const host = domainOf(url);
+  if (!host) return false;
+  return allow.some((d) => host === d || host.endsWith('.' + d));
+}
+
+/* ------------------------------------------------------------------ */
+/* Engines (each returns whether its backend was reachable — the gather
+ * report turns backend failures into per-engine audit warnings)        */
+/* ------------------------------------------------------------------ */
+
+function firstTagBlock(xml: string, tag: string): string[] {
+  const re = new RegExp(`<${tag}[\\s\\S]*?</${tag}>`, 'gi');
+  return xml.match(re) ?? [];
+}
+
+async function engineGnews(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  // gnewsLocale may be a comma-separated list of locales (the `tech` preset
+  // queries en-US AND zh-CN). Run one fetch per locale and merge — the later
+  // dedupe pass (URL hash + fuzzy title) collapses any cross-locale overlap.
+  const locales = (q.gnewsLocale || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const query = encodeURIComponent(q.topics.join(' OR '));
+  let ok = false;
+  for (const locale of locales) {
+    const url = `https://news.google.com/rss/search?q=${query}&${locale}`;
+    let res = await fetchWithTimeout(url);
+    if (!res.ok) {
+      // Shared worker-egress IPs get throttled by Google; one polite retry
+      // (same class as the arXiv/S2 backoff) before giving up the locale.
+      await new Promise((r) => setTimeout(r, 4000));
+      res = await fetchWithTimeout(url);
+    }
+    if (!res.ok) continue;
+    ok = true;
+    const xml = await res.text();
+    for (const item of firstTagBlock(xml, 'item').slice(0, 6)) {
+      const title = tagText(item, 'title');
+      const link = tagText(item, 'link');
+      if (!title || !link) continue;
+      const sourceEl = /<source[^>]*>([\s\S]*?)<\/source>/i.exec(item);
+      out.push({
+        tag: 'headlines',
+        title,
+        url: link,
+        source: sourceEl
+          ? decodeEntities(stripCdata(sourceEl[1])).trim() || domainOf(link)
+          : domainOf(link),
+        date: tagText(item, 'pubDate'),
+      });
+    }
+  }
+  return ok;
+}
+
+async function engineHn(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  const since = Math.floor(Date.now() / 1000) - 48 * 3600;
+  const query = encodeURIComponent(q.topics.join(' OR '));
+  const url =
+    `https://hn.algolia.com/api/v1/search?query=${query}&tags=story` +
+    `&hitsPerPage=8&numericFilters=created_at_i>${since},points>${q.minPoints}`;
+  const res = await fetchWithTimeout(url);
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as {
+    hits?: {
+      title?: string;
+      url?: string;
+      points?: number;
+      objectID?: string;
+      created_at?: string;
+      story_text?: string;
+    }[];
+  } | null;
+  for (const h of json?.hits ?? []) {
+    if (!h.title) continue;
+    // Ask/Show self-posts carry no publisher URL — link the HN thread itself
+    // (objectID is always present) instead of dropping top-signal content.
+    // story_text (mapped below) is often the richest free snippet we get.
+    const url = h.url || (h.objectID ? `https://news.ycombinator.com/item?id=${h.objectID}` : '');
+    if (!url) continue;
+    out.push({
+      tag: 'trending',
+      title: h.title,
+      url,
+      source: h.url ? domainOf(h.url) || 'Hacker News' : 'Hacker News',
+      date: h.created_at,
+      score: h.points,
+      // story_text is Ask/Show HN self-text — already in the response, so this
+      // costs zero extra requests and often clears the ≥200-char fulltext gate.
+      snippet: h.story_text?.replace(/\s+/g, ' ').trim().slice(0, 1200) || undefined,
+    });
+  }
+  return true;
+}
+
+async function engineArxiv(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.arxivCats.length) return true;
+  const qs = q.arxivCats.map((c) => `cat:${c}`).join('+OR+');
+  const url =
+    `https://export.arxiv.org/api/query?search_query=${qs}` +
+    `&sortBy=submittedDate&sortOrder=descending&max_results=8`;
+  let res = await fetchWithTimeout(url, {}, 15_000);
+  if (res.status === 429) {
+    // arXiv throttles aggressively (shared IPs); one polite retry (plan §10).
+    await new Promise((r) => setTimeout(r, 15_000));
+    res = await fetchWithTimeout(url, {}, 15_000);
+  }
+  if (!res.ok) return false;
+  const xml = await res.text();
+  for (const entry of firstTagBlock(xml, 'entry').slice(0, 6)) {
+    const title = tagText(entry, 'title').replace(/\s+/g, ' ');
+    const summary = tagText(entry, 'summary').replace(/\s+/g, ' ');
+    const id = tagText(entry, 'id');
+    if (!title || !id) continue;
+    // Papers get rich context: full abstract + authors + primary category
+    // (the LLM summarizes; truncation here was why paper digests felt thin).
+    const authors = (entry.match(/<name>([\s\S]*?)<\/name>/g) ?? [])
+      .map((m) => m.replace(/<\/?name>/g, '').trim())
+      .filter(Boolean);
+    const cat =
+      /<arxiv:primary_category[^>]*term="([^"]+)"/.exec(entry)?.[1] ??
+      /<category[^>]*term="([^"]+)"/.exec(entry)?.[1] ??
+      '';
+    const who = authors.length
+      ? 'Authors: ' + authors.slice(0, 4).join(', ') + (authors.length > 4 ? ' et al.' : '') + ' · '
+      : '';
+    const catPart = cat ? '[' + cat + '] ' : '';
+    out.push({
+      tag: 'papers',
+      title,
+      url: id,
+      source: 'arXiv',
+      date: tagText(entry, 'published'),
+      snippet: (catPart + who + summary).replace(/\s+/g, ' ').slice(0, 1200),
+    });
+  }
+  return true;
+}
+
+async function engineHfPapers(out: DigestCandidate[]): Promise<boolean> {
+  const res = await fetchWithTimeout(
+    'https://huggingface.co/api/daily_papers?limit=20',
+    {},
+    15_000,
+  );
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as
+    | { paper?: { title?: string; summary?: string; id?: string; upvotes?: number } }[]
+    | null;
+  const items = (json ?? [])
+    .filter((x) => x.paper?.title)
+    .sort((a, b) => (b.paper?.upvotes ?? 0) - (a.paper?.upvotes ?? 0))
+    .slice(0, 6);
+  for (const p of items) {
+    const id = (p.paper?.id ?? '').trim();
+    // Empty id → junk /papers/ URL (no canonical link); skip rather than
+    // archiving an unresolvable item (review 1, P2-18).
+    if (!id) continue;
+    out.push({
+      tag: 'papers',
+      title: p.paper!.title!,
+      url: `https://huggingface.co/papers/${id}`,
+      source: 'Hugging Face',
+      score: p.paper?.upvotes,
+      snippet: (p.paper?.summary ?? '').replace(/\s+/g, ' ').slice(0, 1200),
+    });
+  }
+  return true;
+}
+
+async function engineSemanticScholar(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.topics.length) return true;
+  // Public Graph API — works keyless until throttled (429/403 without a
+  // key is routine on shared egress). S2_API_KEY lifts the anonymous limits
+  // via x-api-key; absence only loses the header, never the attempt.
+  const headers: Record<string, string> = {};
+  if (q.s2Key) headers['x-api-key'] = q.s2Key;
+  // Public Graph API — no key required. Docs:
+  // https://api.semanticscholar.org/api-docs/graph#tag/Paper-Data/operation/get_graph_get_paper_search
+  const fields =
+    'title,year,abstract,authors,citationCount,influentialCitationCount,url,externalIds,publicationDate,venue';
+  const query = q.topics.join(' OR ');
+  // Recency bound: relevance-ranked search otherwise surfaces all-time famous
+  // papers (wrong for a news slot). S2 accepts an explicit year range.
+  const thisYear = new Date().getUTCFullYear();
+  const url =
+    'https://api.semanticscholar.org/graph/v1/paper/search' +
+    `?query=${encodeURIComponent(query)}&limit=8&fields=${encodeURIComponent(fields)}` +
+    `&year=${thisYear - 1}-${thisYear}`;
+  let res = await fetchWithTimeout(url, { headers }, 15_000);
+  if (res.status === 429) {
+    // Public tier is rate-limited; one polite retry before giving up.
+    await new Promise((r) => setTimeout(r, 4000));
+    res = await fetchWithTimeout(url, { headers }, 15_000);
+  }
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as {
+    data?: SemanticScholarPaper[];
+  } | null;
+  for (const p of json?.data ?? []) {
+    if (!p.title) continue;
+    // Prefer the arXiv canonical URL when available; otherwise the S2 page.
+    const arxivId = p.externalIds?.ArXiv;
+    const paperUrl = arxivId
+      ? `https://arxiv.org/abs/${arxivId}`
+      : p.url || '';
+    if (!paperUrl) continue;
+    const authors = (p.authors ?? []).map((a) => a.name).filter((n): n is string => !!n);
+    const venue = p.venue?.trim();
+    const who = authors.length
+      ? 'Authors: ' +
+        authors.slice(0, 4).join(', ') +
+        (authors.length > 4 ? ' et al.' : '') +
+        ' · '
+      : '';
+    const where = venue ? `[${venue}] ` : '';
+    out.push({
+      tag: 'papers',
+      title: p.title.replace(/\s+/g, ' ').trim(),
+      url: paperUrl,
+      source: venue || domainOf(paperUrl) || 'Semantic Scholar',
+      date: p.publicationDate,
+      snippet:
+        (where + who + (p.abstract ?? '')).replace(/\s+/g, ' ').slice(0, 1200) ||
+        undefined,
+      score: p.influentialCitationCount ?? p.citationCount,
+    });
+  }
+  return true;
+}
+
+/** One paper hit from the Semantic Scholar Graph search endpoint. */
+interface SemanticScholarPaper {
+  title?: string;
+  year?: number;
+  abstract?: string;
+  venue?: string;
+  publicationDate?: string;
+  url?: string;
+  citationCount?: number;
+  influentialCitationCount?: number;
+  externalIds?: { ArXiv?: string; DOI?: string; [k: string]: string | undefined };
+  authors?: { authorId?: string; name?: string }[];
+}
+
+async function engineTavily(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.tavilyKey) return true;
+  const res = await fetchWithTimeout(
+    'https://api.tavily.com/search',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${q.tavilyKey}`,
+      },
+      body: JSON.stringify({
+        query: q.topics.join(' OR '),
+        topic: 'news',
+        days: 2,
+        max_results: 8,
+        include_domains: q.includeDomains.length ? q.includeDomains : undefined,
+      }),
+    },
+    15_000,
+  );
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as {
+    results?: { title?: string; url?: string; content?: string }[];
+  } | null;
+  for (const r of json?.results ?? []) {
+    if (!r.title || !r.url) continue;
+    out.push({
+      tag: 'headlines',
+      title: r.title,
+      url: r.url,
+      source: domainOf(r.url),
+      snippet: (r.content ?? '').slice(0, 300),
+    });
+  }
+  return true;
+}
+
+async function engineExa(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.exaKey) return true;
+  const start = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+  const res = await fetchWithTimeout(
+    'https://api.exa.ai/search',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': q.exaKey,
+      },
+      body: JSON.stringify({
+        query: q.topics.join(' OR '),
+        numResults: 8,
+        startPublishedDate: start,
+        category: 'news',
+        contents: { text: { maxCharacters: 300 } },
+      }),
+    },
+    15_000,
+  );
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as {
+    results?: {
+      title?: string;
+      url?: string;
+      publishedDate?: string;
+      text?: string;
+    }[];
+  } | null;
+  for (const r of json?.results ?? []) {
+    if (!r.title || !r.url) continue;
+    out.push({
+      tag: 'headlines',
+      title: r.title,
+      url: r.url,
+      source: domainOf(r.url),
+      date: r.publishedDate,
+      snippet: (r.text ?? '').slice(0, 300),
+    });
+  }
+  return true;
+}
+
+async function engineRss(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  const since = Date.now() - 48 * 3600 * 1000;
+  let ok = q.rssFeeds.length === 0; // unconfigured = skip, not failure
+  for (const feed of q.rssFeeds.slice(0, 4)) {
+    try {
+      const res = await fetchWithTimeout(feed, {}, 10_000);
+      if (!res.ok) continue;
+      ok = true;
+      const xml = (await res.text()).slice(0, 2_000_000); // size guard (10 MB feeds)
+      const blocks = [...firstTagBlock(xml, 'item'), ...firstTagBlock(xml, 'entry')];
+      for (const item of blocks.slice(0, 5)) {
+        const rawTitle = tagText(item, 'title');
+        const title = rawTitle.replace(/<[^>]*>/g, '').trim();
+        const link =
+          tagText(item, 'link') ||
+          /<link[^>]*href="([^"]+)"/i.exec(item)?.[1] ||
+          '';
+        if (!title || !link) continue;
+        const dateStr = tagText(item, 'pubDate') || tagText(item, 'updated');
+        const ts = dateStr ? Date.parse(dateStr) : NaN;
+        if (Number.isFinite(ts) && ts < since) continue; // recency filter
+        const desc = tagText(item, 'description') || tagText(item, 'summary');
+        out.push({
+          tag: 'headlines',
+          title: title.replace(/<[^>]*>/g, '').trim(),
+          url: link.trim(),
+          source: domainOf(feed),
+          date: dateStr || undefined,
+          snippet: desc.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').slice(0, 280),
+        });
+      }
+    } catch {
+      // feed unreachable — degrade per plan §10
+    }
+  }
+  return ok;
+}
+
+/** Result of a gather run: ranked candidates + per-engine audit state. */
+export interface GatherReport {
+  candidates: DigestCandidate[];
+  /** Engine names whose backend call failed (key-gated skips don't count). */
+  failures: string[];
+  /** Configured engines that had nothing to run — missing key, no RSS feeds,
+   *  no arXiv categories. Deliberately NOT failures (the run is healthy);
+   *  surfaced so a dormant paid engine is visible instead of silently absent
+   *  (review 2: not-configured visibility). */
+  skipped: string[];
+}
+
+/**
+ * What a failed engine most likely means and what to do — surfaced in the
+ * audit Details panel so a warning is actionable, not just a code.
+ */
+export const ENGINE_HINTS: Record<string, string> = {
+  gnews:
+    'Google throttles shared worker-egress IPs or the 10s fetch timed out; ' +
+    'usually transient (one automatic retry already ran). If it persists ' +
+    'across days, raise the fetch timeout or lean on hn/rss.',
+  hn: 'Algolia unreachable or slow; usually transient.',
+  rss: 'Feed unreachable, oversized, or bot-blocking (403); check the feed ' +
+    'URL in NEWS_RSS_FEEDS, or drop it from the preset.',
+  tavily: 'Key, quota (1,000 credits/mo free), or API change — check the key ' +
+    'and usage at tavily.com.',
+  exa: 'Key, credits ($20 signup + $10/mo free), or API change — check the key.',
+  jsearch: 'Key or shared 10M-token pool exhausted (~10K tokens per call) — ' +
+    'check Jina usage; each call costs pool whether or not it succeeds.',
+  arxiv: 'Aggressive per-IP throttling (shared egress); one 15s-backoff ' +
+    'retry already ran. Persistent 429s mean arXiv is limiting us.',
+  hf: 'Hugging Face API unreachable or changed shape.',
+  s2: 'Public tier throttled or keyless blocked (403 observed) — consider a ' +
+    'free Semantic Scholar API key, or accept papers from arxiv+hf.',
+};
+
+/** Fallback hint for engines without a specific entry. */
+const DEFAULT_ENGINE_HINT =
+  'Backend unreachable; usually transient. Persistent failures need a look.';
+
+/**
+ * What a not-configured engine needs to wake up — same shape as the failure
+ * hints so the audit Details panel treats both uniformly.
+ */
+const ENGINE_SKIP_HINTS: Record<string, string> = {
+  tavily: 'set TAVILY_API_KEY to enable the tavily engine.',
+  exa: 'set EXA_API_KEY to enable the exa engine.',
+  jsearch: 'set JINA_API_KEY to enable the jsearch engine.',
+  rss: 'set NEWS_RSS_FEEDS (or a preset with feeds) to enable the rss engine.',
+  arxiv: 'set NEWS_ARXIV_CATEGORIES (or a preset with categories) to enable arXiv.',
+};
+
+const DEFAULT_ENGINE_SKIP_HINT =
+  'configure its key or inputs to enable it.';
+
+/**
+ * Human summary for a skipped-engine set: names the dormant engines and what
+ * each needs. Pure (unit-tested); logged at info level — configuration
+ * status, not a failure.
+ */
+export function describeEngineSkips(skipped: string[]): {
+  reason: string;
+  hint: string;
+} {
+  return {
+    reason: `engines_not_configured: ${skipped.join(', ')} had nothing to run — skipped until configured`,
+    hint: skipped
+      .map((s) => `${s}: ${ENGINE_SKIP_HINTS[s] ?? DEFAULT_ENGINE_SKIP_HINT}`)
+      .join(' '),
+  };
+}
+
+/**
+ * Human summary + hints for a failed-engine set. Pure (unit-tested) so the
+ * audit row explains itself: which backends died and what each likely means.
+ */
+export function describeEngineFailures(failures: string[]): {
+  reason: string;
+  hint: string;
+} {
+  const names = failures.join(', ');
+  return {
+    reason: `engines_failed: ${names} unreachable — digest built from the remaining engines`,
+    hint: failures
+      .map((f) => `${f}: ${ENGINE_HINTS[f] ?? DEFAULT_ENGINE_HINT}`)
+      .join(' '),
+  };
+}
+
+/** Run all configured engines; returns deduped, allowlist-filtered candidates. */
+export async function gatherSources(q: SourceQuery): Promise<DigestCandidate[]> {
+  return (await gatherSourcesDetailed(q)).candidates;
+}
+
+/**
+ * Diversity-aware selection. A pure global score-sort crowds out unscored
+ * engines: S2 (citations) + HF (upvotes) fill the whole papers cap and arXiv
+ * contributes zero; HN (points) fills the headline slots and gnews/rss
+ * (no score) get the scraps. The LLM makes the final quality call, so the
+ * pool it sees should represent every engine that returned items.
+ *
+ * Round-robin one item per engine per round until the cap: each engine's
+ * group is sorted score-desc internally (best item first), and each round is
+ * re-ordered score-desc so the prompt still leads with the strongest signals.
+ * Failed or unconfigured engines contribute no items and drop out naturally;
+ * a single live engine fills the whole cap (old behavior preserved).
+ */
+export function interleaveByEngine(
+  items: DigestCandidate[],
+  cap: number,
+): DigestCandidate[] {
+  if (cap <= 0) return [];
+  // Group by engine; Map iteration order = first appearance = configured
+  // engine order (free-tier baseline engines lead, add-ons follow).
+  const groups = new Map<string, DigestCandidate[]>();
+  for (const c of items) {
+    const g = groups.get(c.engine ?? '');
+    if (g) g.push(c);
+    else groups.set(c.engine ?? '', [c]);
+  }
+  for (const g of groups.values()) {
+    g.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  }
+  const out: DigestCandidate[] = [];
+  for (let round = 0; out.length < cap; round++) {
+    const picks: DigestCandidate[] = [];
+    for (const g of groups.values()) {
+      if (round < g.length) picks.push(g[round]);
+    }
+    if (!picks.length) break; // every group exhausted
+    picks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    for (const p of picks) {
+      if (out.length >= cap) break;
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Engines whose inputs are absent are skipped inside the engine itself
+ * (they return success with zero candidates — key-gated skips don't count
+ * as failures). Derive that skip list from the query alone so dormancy can
+ * be surfaced without changing any engine's signature.
+ */
+function engineSkips(q: SourceQuery): string[] {
+  const skipped: string[] = [];
+  for (const engine of q.newsEngines) {
+    if (engine === 'tavily' && !q.tavilyKey) skipped.push('tavily');
+    else if (engine === 'exa' && !q.exaKey) skipped.push('exa');
+    else if (engine === 'jsearch' && !q.jinaKey) skipped.push('jsearch');
+    else if (engine === 'rss' && q.rssFeeds.length === 0) skipped.push('rss');
+  }
+  if (q.mode !== 'news') {
+    for (const engine of q.scholarEngines) {
+      if (engine === 'arxiv' && q.arxivCats.length === 0) skipped.push('arxiv');
+    }
+  }
+  return skipped;
+}
+
+/**
+ * Same as gatherSources, plus per-engine reachability for audit warnings
+ * (review 1, P2-11: a dead engine used to degrade silently) and a skip list
+ * for not-configured engines (review 2). Unknown engine names are ignored
+ * (config typo ≠ failed backend).
+ */
+export async function gatherSourcesDetailed(q: SourceQuery): Promise<GatherReport> {
+  // Per-engine buffers: each job writes into its own array so candidates can
+  // be attributed to their engine for the diversity-aware selection below.
+  const jobs: { name: string; buf: DigestCandidate[]; run: Promise<boolean> }[] = [];
+  const spawn = (
+    name: string,
+    engine: (q: SourceQuery, out: DigestCandidate[]) => Promise<boolean>,
+  ) => {
+    const buf: DigestCandidate[] = [];
+    jobs.push({ name, buf, run: engine(q, buf) });
+  };
+  for (const engine of q.newsEngines) {
+    if (engine === 'gnews') spawn('gnews', engineGnews);
+    else if (engine === 'hn') spawn('hn', engineHn);
+    else if (engine === 'rss') spawn('rss', engineRss);
+    else if (engine === 'tavily') spawn('tavily', engineTavily);
+    else if (engine === 'exa') spawn('exa', engineExa);
+    else if (engine === 'jsearch') spawn('jsearch', engineJsearch);
+  }
+  if (q.mode !== 'news') {
+    for (const engine of q.scholarEngines) {
+      if (engine === 'arxiv') spawn('arxiv', engineArxiv);
+      else if (engine === 'hf') spawn('hf', (_q, out) => engineHfPapers(out));
+      else if (engine === 's2') spawn('s2', engineSemanticScholar);
+    }
+  }
+  const results = await Promise.allSettled(jobs.map((j) => j.run));
+  const failures = results.flatMap((r, i) =>
+    r.status === 'fulfilled' && r.value === true ? [] : [jobs[i].name],
+  );
+  // Engine attribution: tag each candidate with its engine (attribution only —
+  // prompts map an explicit field list, so this never reaches the LLM).
+  for (const j of jobs) {
+    for (const c of j.buf) c.engine = j.name;
+  }
+  const out = jobs.flatMap((j) => j.buf);
+
+  // Dedupe: URL hash first, then fuzzy title (cross-language duplicates).
+  const seenUrls = new Set<string>();
+  const seenTitles: string[] = [];
+  const deduped: DigestCandidate[] = [];
+  for (const c of out) {
+    if (!c.url || !c.title || !inAllowlist(c.url, q.includeDomains)) continue;
+    const urlKey = normalizeUrl(c.url);
+    if (seenUrls.has(urlKey)) continue;
+    if (seenTitles.some((t) => titleSimilarity(t, c.title) >= 0.6)) continue;
+    seenUrls.add(urlKey);
+    seenTitles.push(c.title);
+    deduped.push(c);
+  }
+
+  // Selection: diversity-first round-robin (see interleaveByEngine) — the
+  // old global score-sort systematically zeroed arXiv (papers) and rss
+  // (headlines) whenever a scored sibling returned a full page.
+  const candidates = interleaveByEngine(deduped, 12);
+  return { candidates, failures, skipped: engineSkips(q) };
+}
+
+/* ------------------------------------------------------------------ */
+/* Optional full-text extraction (native HTMLRewriter, Jina fallback)   */
+/* ------------------------------------------------------------------ */
+
+export async function extractArticleText(html: string, cap = 1200): Promise<string> {
+  let article = '';
+  let body = '';
+  let skipDepth = 0;
+  let articleDepth = 0;
+  const SKIP = new Set([
+    'script', 'style', 'noscript', 'svg', 'nav', 'header',
+    'footer', 'aside', 'form', 'select', 'button', 'iframe',
+  ]);
+  const rewriter = new HTMLRewriter().on('*', {
+    element(el) {
+      const tag = el.tagName;
+      if (SKIP.has(tag)) {
+        skipDepth++;
+        el.onEndTag(() => {
+          skipDepth--;
+        });
+      }
+      if (tag === 'article') {
+        articleDepth++;
+        el.onEndTag(() => {
+          articleDepth--;
+        });
+      }
+    },
+    text(t) {
+      if (skipDepth > 0 || !t.text) return;
+      if (articleDepth > 0) article += t.text;
+      body += t.text;
+      if (t.lastInTextNode) {
+        if (articleDepth > 0) article += ' ';
+        body += ' ';
+      }
+    },
+  });
+  await rewriter.transform(new Response(html)).arrayBuffer(); // drain
+  const pick = article.trim().length > 200 ? article : body;
+  return pick.replace(/\s+/g, ' ').trim().slice(0, cap);
+}
+
+/**
+ * Jina Reader fallback extraction. JSON mode (`Accept: application/json`) when
+ * keyed: structured `data.content` beats scraping raw markdown, and
+ * `data.usage.tokens` enables budget accounting. Keyed calls get 500 RPM and
+ * escape the anonymous abuse block; keyless calls still work at 20 RPM.
+ */
+export async function extractViaJina(
+  q: SourceQuery,
+  url: string,
+  cap = 1200,
+): Promise<string> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (q.jinaKey) headers.Authorization = `Bearer ${q.jinaKey}`;
+  const res = await fetchWithTimeout(`https://r.jina.ai/${url}`, { headers }, 20_000);
+  if (!res.ok) return '';
+  const json = (await res.json().catch(() => null)) as {
+    data?: { content?: string };
+  } | null;
+  const content = json?.data?.content;
+  if (typeof content !== 'string') return '';
+  return content.replace(/\s+/g, ' ').trim().slice(0, cap);
+}
+
+/**
+ * LlamaParse document extraction — the PDF/files specialist. Never used for
+ * HTML (Jina does HTML better and effectively free; LlamaParse bills every
+ * page). Fast tier = 1 credit/page against the 10K free monthly pool; results
+ * are cached server-side for 48h, so re-parses within that window are free.
+ */
+export async function extractViaLlamaParse(
+  q: SourceQuery,
+  url: string,
+  cap = 1200,
+): Promise<string> {
+  if (!q.llamaKey) return '';
+  try {
+    const create = await fetchWithTimeout(
+      'https://api.cloud.llamaindex.ai/api/parsing/upload/file',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${q.llamaKey}`,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ file_url: url, parsing_mode: 'fast' }),
+      },
+      30_000,
+    );
+    if (!create.ok) return '';
+    const job = (await create.json().catch(() => null)) as { id?: string } | null;
+    if (!job?.id) return '';
+    // Poll for completion (typical PDF: a few seconds; 48h cache makes retries free).
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 3_000));
+      const poll = await fetchWithTimeout(
+        `https://api.cloud.llamaindex.ai/api/parsing/job/${job.id}/result/text`,
+        { headers: { Authorization: `Bearer ${q.llamaKey}` } },
+        15_000,
+      );
+      if (poll.status === 404) continue; // still processing
+      if (!poll.ok) return '';
+      const text = await poll.text();
+      return text.replace(/\s+/g, ' ').trim().slice(0, cap);
+    }
+  } catch {
+    // extraction failure — caller keeps whatever it already has
+  }
+  return '';
+}
+
+/**
+ * Jina Search engine (`s.jina.ai`). Requires a key (keyless requests are
+ * blocked). Each request costs a FIXED ~10,000 tokens against the shared free
+ * pool (~1,000 requests total) — it is an engine (one call per run), never a
+ * per-candidate path. Results arrive with extracted page content, so its
+ * candidates are usually born past the ≥200-char fulltext gate.
+ */
+async function engineJsearch(q: SourceQuery, out: DigestCandidate[]): Promise<boolean> {
+  if (!q.jinaKey) return true;
+  const query = q.topics.join(' ');
+  if (!query) return true;
+  const res = await fetchWithTimeout(
+    `https://s.jina.ai/${encodeURIComponent(query)}`,
+    { headers: { Authorization: `Bearer ${q.jinaKey}`, Accept: 'application/json' } },
+    30_000,
+  );
+  if (!res.ok) return false;
+  const json = (await res.json().catch(() => null)) as {
+    data?: {
+      title?: string;
+      url?: string;
+      description?: string;
+      content?: string;
+    }[];
+  } | null;
+  for (const r of json?.data ?? []) {
+    if (!r.title || !r.url) continue;
+    out.push({
+      tag: 'headlines',
+      title: r.title.replace(/\s+/g, ' ').trim(),
+      url: r.url,
+      source: domainOf(r.url) || 'Jina',
+      snippet: (r.content || r.description || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 1200),
+    });
+  }
+  return true;
+}
+

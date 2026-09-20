@@ -32,7 +32,7 @@ export interface SettingDef {
   /** Extra validation beyond kind parsing; returns an error message or null. */
   validate?: (raw: string) => string | null;
   /** UI grouping (panel renders one section per group). */
-  group: 'moderation' | 'general';
+  group: 'moderation' | 'digest' | 'general';
 }
 
 /** The allowlist. Extend per feature; never accept unlisted keys from the API. */
@@ -66,6 +66,179 @@ export const SETTING_DEFS: SettingDef[] = [
     envVar: 'ENABLE_SELF_CLEAN',
     default: 'false',
     group: 'moderation',
+  },
+  {
+    key: 'digest_enabled',
+    label: 'News digest master switch',
+    description:
+      'When off, digest cron gates no-op (each tick logs a skip). Shadows ENABLE_NEWS_DIGEST.',
+    kind: 'boolean',
+    envVar: 'ENABLE_NEWS_DIGEST',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_autopublish',
+    label: 'Digest auto-publish',
+    description:
+      'When off, digest runs are stored as pending drafts for review instead of publishing. Shadows NEWS_AUTO_PUBLISH.',
+    kind: 'boolean',
+    envVar: 'NEWS_AUTO_PUBLISH',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_fetch_fulltext',
+    label: 'Digest full-text extraction',
+    description:
+      'When on, top digest items fetch + extract page text for richer summaries. Shadows NEWS_FETCH_FULLTEXT.',
+    kind: 'boolean',
+    envVar: 'NEWS_FETCH_FULLTEXT',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_weekly',
+    label: 'Digest weekly rollup',
+    description: 'Enables the weekly digest roundup. Shadows NEWS_ENABLE_WEEKLY.',
+    kind: 'boolean',
+    envVar: 'NEWS_ENABLE_WEEKLY',
+    default: 'false',
+    group: 'digest',
+  },
+  {
+    key: 'digest_monthly',
+    label: 'Digest monthly rollup',
+    description: 'Enables the monthly digest deep-dive. Shadows NEWS_ENABLE_MONTHLY.',
+    kind: 'boolean',
+    envVar: 'NEWS_ENABLE_MONTHLY',
+    default: 'false',
+    group: 'digest',
+  },
+  // --- Strong runtime knobs (CSVs/text as text inputs: simple, flexible, and
+  // genuinely useful for the list-shaped vars — you can extend them at runtime
+  // without a deploy). ---
+  {
+    key: 'digest_schedule',
+    label: 'Digest intraday schedule',
+    description:
+      'CSV of `hour:tag` slots driving the hourly gate (e.g. "9:headlines,14:papers,20:trending,22:deep"). ' +
+      'This is the single source of digest timing; malformed entries are skipped. ' +
+      'Shadows NEWS_SCHEDULE.',
+    kind: 'string',
+    envVar: 'NEWS_SCHEDULE',
+    default: '',
+    group: 'digest',
+  },
+  {
+    key: 'digest_domain',
+    label: 'Digest domain / rotation',
+    description:
+      'Content subject: a preset (tech, finance, science, health, custom) or a rotation ' +
+      'strategy (round-robin / random / all). Unknown values fall back to tech. Shadows NEWS_DOMAIN.',
+    kind: 'string',
+    envVar: 'NEWS_DOMAIN',
+    default: 'tech',
+    group: 'digest',
+  },
+  {
+    key: 'digest_topics',
+    label: 'Digest topics',
+    description:
+      'CSV of query phrases the news/scholar engines gather on. Empty = use the domain preset\'s topics. ' +
+      'Shadows NEWS_TOPICS.',
+    kind: 'string',
+    envVar: 'NEWS_TOPICS',
+    default: '',
+    group: 'digest',
+  },
+  {
+    key: 'digest_language',
+    label: 'Digest output language',
+    description: 'Language the digest post is written in. Shadows NEWS_LANGUAGE.',
+    kind: 'string',
+    envVar: 'NEWS_LANGUAGE',
+    default: 'English',
+    group: 'digest',
+  },
+  {
+    key: 'digest_dialect',
+    label: 'Digest output dialect',
+    description:
+      'Optional dialect of the output language (e.g. "Levantine" for Arabic). Empty = no hint. ' +
+      'Shadows NEWS_DIALECT.',
+    kind: 'string',
+    envVar: 'NEWS_DIALECT',
+    default: '',
+    group: 'digest',
+  },
+  {
+    key: 'digest_max_items',
+    label: 'Digest items per post',
+    description: 'How many items the LLM may select (clamped to 1–8 in code). Shadows NEWS_MAX_ITEMS.',
+    kind: 'number',
+    envVar: 'NEWS_MAX_ITEMS',
+    default: '5',
+    group: 'digest',
+  },
+  {
+    key: 'digest_min_points',
+    label: 'HN quality floor',
+    description:
+      'Minimum Hacker News points for trending items. Raise during a spammy day to cut junk. ' +
+      'Shadows NEWS_MIN_POINTS.',
+    kind: 'number',
+    envVar: 'NEWS_MIN_POINTS',
+    default: '25',
+    group: 'digest',
+  },
+  {
+    key: 'digest_deep_body_limit',
+    label: 'Digest deep-post body cap',
+    description:
+      'Max chars kept from a deep-slot post body (other slots cap at 3900). ' +
+      'The deep prompt invites ~5000-char posts; lower values truncate them again. ' +
+      'Shadows DIGEST_DEEP_BODY_LIMIT.',
+    kind: 'number',
+    envVar: 'DIGEST_DEEP_BODY_LIMIT',
+    default: '7900',
+    group: 'digest',
+  },
+  {
+    key: 'digest_sponsor',
+    label: 'Digest sponsor footer',
+    description:
+      'Optional footer line appended post-sanitize (never LLM-generated). Empty = no footer. ' +
+      'Plain text or inline Telegram HTML from the post-body allowlist ' +
+      '(b/i/u/s/a/code/pre/blockquote; link hrefs must be http(s) or tg), e.g. ' +
+      'Brought to you by <a href="https://github.com/srcKod/modflare">Modflare</a>. ' +
+      'Markdown [text](url) is not interpreted. Shadows NEWS_SPONSOR_TEXT.',
+    kind: 'string',
+    envVar: 'NEWS_SPONSOR_TEXT',
+    default: '',
+    group: 'digest',
+  },
+  {
+    key: 'digest_target_name',
+    label: 'Target chat display name',
+    description:
+      'Human name shown for the target channel/group in confirms and headers. ' +
+      'Empty = show the raw chat id. Shadows NEWS_TARGET_CHAT_NAME.',
+    kind: 'string',
+    envVar: 'NEWS_TARGET_CHAT_NAME',
+    default: '',
+    group: 'digest',
+  },
+  {
+    key: 'digest_dev_seed',
+    label: 'Digest dev-seed endpoint',
+    description:
+      'Enables the dev-only "run a real draft" panel tool. Intended to stay off in production. ' +
+      'Shadows NEWS_DEV_SEED.',
+    kind: 'boolean',
+    envVar: 'NEWS_DEV_SEED',
+    default: 'false',
+    group: 'digest',
   },
 ];
 

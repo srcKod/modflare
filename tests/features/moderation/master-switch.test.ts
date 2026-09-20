@@ -1,6 +1,25 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { moderationFeature } from '../../../src/features/moderation';
 import type { Env, TelegramUpdate } from '../../../src/core/types';
+
+/**
+ * Hermetic fetch: the "switch stays ON" tests run past the switch into
+ * isAdminUser, which falls back to a getChatMember API call when no admin
+ * lists are configured. Without this stub that call hangs the suite in
+ * network-less environments (5s vitest timeout). A Telegram-style
+ * `{ok:false}` keeps the real path (not-admin → PROCESS_MODE skip).
+ */
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({
+      json: async () => ({ ok: false, description: 'Unauthorized' }),
+    })),
+  );
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /** A minimal group update that would pass every gate except the switch. */
 function groupUpdate(): TelegramUpdate {

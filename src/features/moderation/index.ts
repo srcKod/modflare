@@ -9,10 +9,11 @@
  *   3. LLM verdict (fail-open) → delete + optional fun reply, or keep.
  */
 
-import { envList, envBool } from '../../core/config';
+import { envBool } from '../../core/config';
 import { makeLogger } from '../../core/logger';
 import type { AuditLogger } from '../../core/logger';
 import { loadSettingOverrides, resolveSetting, settingBool } from '../../core/settings';
+import { isAllowedGroup, isGroupChat } from '../../shared/chat-policy';
 import {
   buildUserMention,
   deleteMessage,
@@ -70,7 +71,8 @@ async function handleModerationUpdate(
   };
 
   // Only moderate in groups (and supergroups). Ignore private chats/admin DMs.
-  if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return true;
+  // Shared policy (group-type half of the front gate in shared/chat-policy).
+  if (!isGroupChat(msg.chat.type)) return true;
 
   // Master switch (runtime settings → ENABLE_MODERATION env → default on).
   // Off means messages pass through untouched; the skip is logged so the
@@ -88,15 +90,11 @@ async function handleModerationUpdate(
     return true;
   }
 
-  // Optional chat whitelist. When ALLOWED_GROUP_IDS is set, only moderate in
-  // those specific chats (numeric IDs, negatives for supergroups). Any other
-  // chat is ignored before the activation gate, admin lookup, video policy, or
-  // LLM call, so a stray copy of the bot can't burn CPU/AI-token quota. Unset
-  // or empty = allow all groups (backward compatible / fail-open).
-  const allowedGroups = envList(env.ALLOWED_GROUP_IDS)
-    .map((s) => Number(s))
-    .filter((n) => Number.isFinite(n));
-  if (allowedGroups.length > 0 && !allowedGroups.includes(msg.chat.id)) {
+  // Optional chat whitelist (shared policy): when ALLOWED_GROUP_IDS is set,
+  // only moderate in those specific chats, so a stray copy of the bot can't
+  // burn CPU/AI-token quota. Unset or empty = allow all groups (backward
+  // compatible / fail-open).
+  if (!isAllowedGroup(env, msg.chat.id)) {
     await logger.debug('group_not_whitelisted', { ...ctx });
     return true;
   }
@@ -109,6 +107,15 @@ async function handleModerationUpdate(
 
   // Service messages (new members, pinned, etc.) are not user content.
   if (msg.new_chat_members || msg.left_chat_member) return true;
+
+  // Own-post exemption: the discussion-group copy of our channel digest post
+  // arrives as a GroupAnonymousBot forward (forward_from_chat = our channel).
+  // It is our own content, never stranger spam — skip it before the LLM call.
+  const targetChat = (env.NEWS_TARGET_CHAT_ID || '').trim();
+  if (targetChat && Number(targetChat) === msg.forward_from_chat?.id) {
+    await logger.debug('self_post_exempt', { ...ctx });
+    return true;
+  }
 
   try {
     // Admins are exempt: responsible members selected by the owner. We take

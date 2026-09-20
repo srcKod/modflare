@@ -77,10 +77,18 @@ export async function handleAdmin(
   if (rest === '/style.css') return staticAsset(STYLE_CSS, 'text/css; charset=utf-8');
   if (rest === '/app.js') return staticAsset(APP_JS, 'text/javascript; charset=utf-8');
 
-  // Feature-contributed API routes (method + exact rest match).
-  const route = featureRoutes.find(
-    (r) => r.method === request.method && r.rest === rest,
-  );
+  // Feature-contributed API routes: exact rest match first, then prefix
+  // (parameterized paths — the handler parses the remainder itself).
+  const route =
+    featureRoutes.find(
+      (r) => r.method === request.method && r.rest === rest,
+    ) ??
+    featureRoutes.find(
+      (r) =>
+        r.method === request.method &&
+        r.prefix !== undefined &&
+        rest.startsWith(r.prefix),
+    );
   if (route) return route.handler(request, env);
 
   return json({ error: 'Not found' }, 404);
@@ -221,13 +229,24 @@ function base64urlDecode(s: string): string {
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      // Admin panels must reflect deploys and new writes immediately; without
+      // this the browser heuristically caches GETs (stale Refresh, plan §23.4).
+      'Cache-Control': 'no-store',
+    },
   });
 }
 
 function htmlResponse(html: string): Response {
   return new Response(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      // Same reasoning as the API responses: the panel must reflect deploys
+      // immediately (a stale cached page + fresh JS, or vice versa, runs
+      // mismatched code — this exact mix once produced phantom artifacts).
+      'Cache-Control': 'no-store',
+    },
   });
 }
 

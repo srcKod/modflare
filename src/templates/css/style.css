@@ -41,6 +41,9 @@ a.logout{color:#2563eb;text-decoration:none;font-size:.9rem}
 /* Bot queue tab */
 .bq-table th{cursor:default}
 .badge.due{background:#fef3c7;color:#b45309}
+/* Intraday slot tag cell (headlines/trending/papers/deep) — neutral slate so
+   it doesn't compete with the per-domain colors or the type badge. */
+.badge.dg-tag{background:#f1f5f9;color:#334155}
 .badge.bq-kind-fun{background:#ecfdf5;color:#047857}
 .badge.bq-kind-default{background:#f3f4f6;color:#4b5563}
 .bq-msg .reason{
@@ -132,10 +135,13 @@ table{min-width:760px}
   max-height:140px;overflow-y:auto;
   white-space:pre-wrap;word-break:break-word
 }
-/* Reason line — subdued */
+/* Reason line — subdued; long failure reasons clamp to two lines so the
+   details panel stays readable. */
 .d-why{
   font-size:.76rem;color:#6b7280;
-  margin-bottom:4px;line-height:1.35
+  margin-bottom:4px;line-height:1.35;
+  display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden
 }
 /* LLM attribution: provider · model · flag on one line */
 .d-ai{
@@ -183,8 +189,114 @@ table{min-width:760px}
 .d-raw pre{
   margin:8px 0 0;background:#0f172a;color:#e2e8f0;
   padding:10px 12px;border-radius:6px;font-size:.72rem;
-  overflow:auto;max-height:220px;line-height:1.45
+  overflow:auto;max-height:280px;line-height:1.45
 }
+
+/* Digest tab: type badges, stats reuse .stat, editor + preview components. */
+.dg-h{margin:20px 0 8px;font-size:.95rem}
+.badge.dg-type-daily{background:#e0e7ff;color:#4338ca}
+.badge.dg-type-weekly{background:#ecfdf5;color:#047857}
+.badge.dg-type-monthly{background:#fef3c7;color:#b45309}
+.dg-table th{cursor:default}
+.dg-table td{height:auto}
+.dg-table .primary{font-weight:600}
+.dg-table .secondary{font-size:.7rem;color:var(--muted)}
+.dg-table .reason{max-width:280px}
+/* Draft editor */
+.dg-editor{
+  background:var(--bg);border:1px solid var(--line);border-radius:10px;
+  padding:14px 16px;margin:12px 0 4px
+}
+.dg-editor-head{display:flex;flex-direction:column;align-items:stretch;gap:6px;margin-bottom:10px}
+#dg-editor-title{display:block;font-size:1.05rem;line-height:1.4}
+#dg-editor-meta{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:.75rem}
+#dg-editor-meta .mono{font-size:.72rem}
+.dg-toolbar{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center}
+.dg-toolbar button{
+  padding:4px 12px;border:1px solid var(--line);border-radius:6px;
+  background:#fff;cursor:pointer;font-size:.85rem;line-height:1.3
+}
+.dg-toolbar button:hover{background:#eff6ff;border-color:#93c5fd}
+.dg-toolbar button.on{background:#dbeafe;border-color:#93c5fd;color:#1d4ed8;font-weight:600}
+.dg-toolbar-right{margin-left:auto;display:flex;gap:6px;align-items:center}
+.dg-hint{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:22px;height:22px;border-radius:50%;
+  border:1px solid var(--line);background:#f3f4f6;color:var(--muted);
+  font-size:.75rem;font-weight:700;cursor:help;user-select:none
+}
+.dg-hint:hover{color:#111827;border-color:#93c5fd}
+#dg-body{
+  width:100%;font-family:ui-monospace,monospace;font-size:.8rem;line-height:1.5;
+  border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-height:480px;
+  resize:vertical;background:#fff;color:#111827;white-space:pre-wrap
+}
+.dg-editor-info{display:flex;gap:14px;align-items:center;margin:6px 0 10px;flex-wrap:wrap}
+.dg-preview-label{font-size:.72rem;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.dg-preview{
+  background:#0f172a;color:#e2e8f0;border-radius:10px;
+  padding:12px 14px;font-size:.85rem;line-height:1.55;
+  max-height:480px;overflow-y:auto;word-break:break-word;white-space:pre-wrap
+}
+.dg-preview a{color:#7dd3fc}
+.dg-preview blockquote{border-left:3px solid #475569;margin:6px 0;padding:2px 10px;color:#cbd5e1}
+.dg-preview code{background:#1e293b;border-radius:4px;padding:1px 5px}
+.dg-preview pre{background:#1e293b;border-radius:6px;padding:8px 10px;overflow:auto}
+.dg-actions{display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.dg-btn{
+  padding:7px 16px;border:1px solid var(--line);border-radius:6px;
+  background:#fff;cursor:pointer;font-size:.85rem;font-weight:500
+}
+.dg-btn:hover{background:#f3f4f6}
+.dg-btn.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.dg-btn.primary:hover{background:#1d4ed8}
+.dg-btn.danger{background:#fff;border-color:#fecaca;color:#b91c1c}
+.dg-btn.danger:hover{background:#fef2f2}
+.dg-settings summary{cursor:pointer;color:#2563eb;font-size:.85rem}
+/* Resolved settings as readable key/value rows (replaces the JSON dump). */
+.dg-kv{margin:8px 0 0}
+.dg-kv .kv{width:100%;max-width:720px;border-collapse:collapse;font-size:.8rem}
+.dg-kv .kv td{padding:4px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+.dg-kv .kv td.k{font-family:ui-monospace,monospace;color:#475569;white-space:nowrap;width:1%;font-size:.72rem}
+.dg-kv .kv td.v{color:#111827;word-break:break-word}
+.dg-kv .kv tr:last-child td{border-bottom:0}
+/* Reaction chips: per-emoji pills, tinted by sentiment class (§23.2). */
+.rx-wrap{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.rx-chip{
+  display:inline-block;padding:1px 8px;border-radius:999px;
+  background:#f3f4f6;color:#374151;font-size:.74rem;line-height:1.5;
+  white-space:nowrap;font-weight:500;border:1px solid transparent
+}
+.rx-chip.rx-pos{background:#dcfce7;color:#15803d;border-color:#bbf7d0}
+.rx-chip.rx-neg{background:#fee2e2;color:#b91c1c;border-color:#fecaca}
+/* Trend arrow + velocity under the Reactions column. */
+.trend-up{color:#15803d;font-weight:600}
+.trend-down{color:#b91c1c;font-weight:600}
+.trend-flat{color:#6b7280}
+.trend-new{color:#9ca3af}
+/* Domain badges: neutral base color per preset (§23.1 rotation domains). */
+.badge[class*="dg-domain-"]{background:#f3f4f6;color:#4b5563}
+.badge.dg-domain-tech{background:#e0e7ff;color:#4338ca}
+.badge.dg-domain-tech-zh{background:#fef3c7;color:#b45309}
+.badge.dg-domain-finance{background:#dcfce7;color:#15803d}
+.badge.dg-domain-science{background:#ede9fe;color:#6d28d9}
+.badge.dg-domain-health{background:#ffe4e6;color:#be123c}
+.dg-table .secondary{font-size:.66rem;color:var(--muted)}
+/* Published table: the count column (numeric) and the breakdown (emoji pills). */
+.col-rx-count{width:52px}
+.col-rx{min-width:96px}
+/* Refresh/run loading state: dim + disable clicks; the button text already
+   swaps to "Working…", so no animated spinner circle is needed. */
+.dg-loading{pointer-events:none;opacity:.7}
+/* Toast stack: fixed top-right, auto-dismiss; colour by kind. */
+.dg-toast-host{position:fixed;top:14px;right:14px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.dg-toast{padding:9px 16px;border-radius:8px;font-size:.83rem;font-weight:500;color:#fff;background:#374151;box-shadow:0 6px 18px rgba(0,0,0,.2);min-width:180px;max-width:340px;pointer-events:auto;
+  transform:translateX(24px);opacity:0;transition:transform .25s ease,opacity .25s ease}
+.dg-toast-show{transform:none;opacity:1}
+.dg-toast-hide{opacity:0;transform:translateX(24px)}
+.dg-toast-ok{background:#15803d}
+.dg-toast-warn{background:#b45309}
+.dg-toast-err{background:#b91c1c}
 
 /* Narrow screens: stack filters, shrink paddings, hide less-critical columns. */
 @media (max-width:720px){

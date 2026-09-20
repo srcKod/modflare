@@ -10,6 +10,7 @@
 <nav class="tabs">
   <a class="tab" data-tab="audit" href="?tab=audit">Audit log</a>
   <a class="tab" data-tab="bot-queue" href="?tab=bot-queue">Bot queue</a>
+  <a class="tab" data-tab="digest" href="?tab=digest">Digest</a>
   <a class="tab" data-tab="settings" href="?tab=settings">Settings</a>
 </nav>
 <main>
@@ -30,7 +31,7 @@
   <div class="table-wrap">
   <table>
     <thead><tr>
-      <th data-k="ts" class="col-time">Time</th>
+      <th data-k="ts" class="col-time" id="th-ts">Time</th>
       <th data-k="level" class="col-level">Level</th>
       <th data-k="event" class="col-event">Event</th>
       <th data-k="chat_username" class="col-chat">Chat</th>
@@ -63,13 +64,118 @@
         <th>Chat</th>
         <th>Message</th>
         <th>Kind</th>
-        <th>Sent (UTC)</th>
+        <th id="th-sent">Sent (UTC)</th>
         <th>Age</th>
         <th>Attempts</th>
       </tr></thead>
       <tbody id="bq-rows"><tr class="empty"><td colspan="7">Loading...</td></tr></tbody>
     </table>
     </div>
+  </section>
+  <section id="tab-digest" hidden>
+    <div id="dg-toast-host" class="dg-toast-host"></div>
+    <div class="notice" id="dg-notice" hidden></div>
+    <div class="stats" id="dg-stats"></div>
+    <div class="filters">
+      <button id="dg-refresh">Refresh</button>
+      <span id="dg-seed-wrap" hidden>
+        <label for="dg-seed-hour">Run slot @</label>
+        <input id="dg-seed-hour" type="number" min="0" max="23" value="9" style="width:52px"/>
+        <label for="dg-seed-tag">tag:</label>
+        <select id="dg-seed-tag">
+          <option value="headlines">headlines</option>
+          <option value="papers">papers</option>
+          <option value="trending">trending</option>
+          <option value="deep">deep</option>
+        </select>
+        <button id="dg-seed" title="Run the REAL pipeline for the chosen local hour + tag (dev only, NEWS_DEV_SEED=true) and save a draft to review">Run real draft</button>
+      </span>
+    </div>
+
+    <div class="filters" id="dg-filters">
+      <select id="dg-f-domain" title="Filter by content domain (All = every domain, incl. rotation runs)"><option value="all">domain: all</option></select>
+      <select id="dg-f-type" title="Filter by digest type">
+        <option value="">type: all</option><option>daily</option><option>weekly</option><option>monthly</option>
+      </select>
+      <select id="dg-f-tag" title="Filter by intraday slot">
+        <option value="">slot: all</option><option>headlines</option><option>trending</option><option>papers</option><option>deep</option>
+      </select>
+      <input id="dg-f-from" type="date" style="width:125px" title="Published from (UTC)">
+      <input id="dg-f-to" type="date" style="width:125px" title="Published to (UTC, inclusive)">
+      <input id="dg-f-minrx" type="number" min="0" placeholder="min reactions" style="width:110px" title="Minimum reactions">
+      <select id="dg-f-trend" title="Filter by reaction trend (~24h windowed delta)">
+        <option value="">trend: all</option>
+        <option value="up">📈 up</option>
+        <option value="flat">➖ flat</option>
+        <option value="down">📉 down</option>
+        <option value="new">new</option>
+      </select>
+      <button id="dg-apply">Apply</button>
+    </div>
+
+    <div class="dg-editor" id="dg-editor" hidden>
+      <div class="dg-editor-head">
+        <strong id="dg-editor-title"></strong>
+        <span id="dg-editor-meta"></span>
+      </div>
+      <div class="dg-toolbar">
+        <button type="button" data-wrap="b" title="Bold"><b>B</b></button>
+        <button type="button" data-wrap="i" title="Italic"><i>I</i></button>
+        <button type="button" data-wrap="u" title="Underline"><u>U</u></button>
+        <button type="button" data-wrap="s" title="Strikethrough"><s>S</s></button>
+        <button type="button" data-wrap="a" title="Link (uses clipboard or selection URL)">🔗</button>
+        <button type="button" data-wrap="code" title="Code">&lt;/&gt;</button>
+        <button type="button" data-wrap="blockquote" title="Quote">❝</button>
+        <span class="dg-toolbar-right">
+          <button type="button" data-dg-dir="ltr" title="Left-to-right editing">LTR</button>
+          <button type="button" data-dg-dir="rtl" title="Right-to-left editing">RTL</button>
+          <button type="button" data-dg-dir="auto" title="Direction follows each paragraph (default)">Auto</button>
+          <span class="dg-hint" title="Telegram HTML: &lt;b&gt; &lt;i&gt; &lt;u&gt; &lt;s&gt; &lt;a href&gt; &lt;code&gt; &lt;blockquote&gt; only — everything else is stripped on publish.">?</span>
+        </span>
+      </div>
+      <textarea id="dg-body" rows="22" spellcheck="false" dir="auto"></textarea>
+      <div class="dg-editor-info">
+        <span id="dg-count" class="mono"></span>
+      </div>
+      <div class="dg-preview-label">Preview (approximate Telegram rendering)</div>
+      <div class="dg-preview" id="dg-preview" dir="auto"></div>
+      <div class="dg-actions">
+        <button id="dg-save" class="dg-btn">Save draft</button>
+        <button id="dg-restore" class="dg-btn" title="Revert to the original LLM output">Restore original</button>
+        <button id="dg-publish" class="dg-btn primary">Publish</button>
+        <button id="dg-discard" class="dg-btn danger">Discard</button>
+        <button id="dg-close" class="dg-btn">Close</button>
+        <span class="info" id="dg-editor-status"></span>
+      </div>
+    </div>
+
+    <h3 class="dg-h">Pending drafts</h3>
+    <div class="table-wrap">
+    <table class="dg-table">
+      <thead><tr>
+        <th>Slot</th><th>Type</th><th>Domain</th><th>Title</th><th>Preview</th><th id="th-run">Run (UTC)</th><th>Size</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="dg-drafts"><tr class="empty"><td colspan="8">Loading…</td></tr></tbody>
+    </table>
+    </div>
+
+    <h3 class="dg-h">Published</h3>
+    <div class="table-wrap">
+    <table class="dg-table">
+      <thead><tr>
+        <th>Title</th><th>Type</th><th>Slot</th><th>Domain</th><th id="th-pub">Published (UTC)</th><th class="col-rx-count">Reactions</th><th>Breakdown</th><th>Trend</th><th>Message</th><th>Edited</th>
+      </tr></thead>
+      <tbody id="dg-published"><tr class="empty"><td colspan="10">Nothing published yet.</td></tr></tbody>
+    </table>
+    <div class="pagination">
+      <button id="dg-prev">‹ Prev</button>
+      <span class="info" id="dg-page-info"></span>
+      <button id="dg-next">Next ›</button>
+    </div>
+    </div>
+
+    <h3 class="dg-h">Resolved settings</h3>
+    <details class="dg-settings"><summary>show</summary><div id="dg-settings" class="dg-kv">…</div></details>
   </section>
   <section id="tab-settings" hidden>
     <div class="notice" id="st-notice" hidden></div>
