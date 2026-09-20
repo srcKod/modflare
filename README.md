@@ -125,6 +125,44 @@ deliberately not caught up — a day-old digest isn't news.
 (`round-robin` / `random`) cycle one preset per slot; each post records its
 effective domain. `NEWS_MODE` selects `news` / `papers` / `both`.
 
+#### How rotation maps slots to domains — worked example
+
+The pick is made per scheduled slot. The slot key is `<date>T<hour>:<tag>`
+(e.g. `2026-09-20T09:headlines`); only daily slots participate — the `deep`
+slot is exempt (it analyzes the day's already-published items and carries no
+domain label).
+
+**`random`** hashes the slot key and picks `presets[hash % 4]` over the wheel
+`tech → finance → science → health`:
+
+| date | 09:headlines | 12:trending | 14:papers | 21:deep |
+|---|---|---|---|---|
+| 2026-09-20 | finance | finance | health | — |
+| 2026-09-21 | science | science | science | — |
+| 2026-09-22 | finance | health | finance | — |
+| 2026-09-23 | tech | tech | tech | — |
+
+- Deterministic: a same-day retry or manual regenerate rebuilds the same
+  domain.
+- Stateless: drafts, failed runs, and dev seeds never affect the pick.
+- Same-day clustering is normal — it is random per slot, not a no-repeat
+  shuffle; every domain appears over the week.
+
+**`round-robin`** walks the same wheel with a cursor equal to the count of
+daily draft/published posts (deep, failed, and discarded rows don't count):
+
+| slot | cursor | pick |
+|---|---|---|
+| day 1 · 09:headlines | 0 | tech |
+| day 1 · 12:trending | 1 | finance |
+| day 1 · 14:papers | 2 | science |
+| day 2 · 09:headlines | 3 | health |
+
+- Every landed daily post advances the cursor by one (dev-seed drafts count
+  too), so each day visits distinct domains when all slots land.
+- A failed slot's retry re-picks the same domain, as long as no other daily
+  post landed in between.
+
 ### Draft review, analytics, settings
 
 - **Drafts first (recommended):** with `NEWS_AUTO_PUBLISH=false`, runs land
