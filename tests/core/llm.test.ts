@@ -79,7 +79,7 @@ describe('chatCompletion', () => {
   it('normalizes HTTP errors to llm_error:<status>', async () => {
     mockSequential([{ status: 500, body: { error: 'boom' } }]);
     const res = await chatCompletion(profile(), [{ role: 'user', content: 'hi' }]);
-    expect(res).toEqual({ ok: false, error: 'llm_error:500' });
+    expect(res).toMatchObject({ ok: false, error: 'llm_error:500', detail: '{"error":"boom"}' });
   });
 
   it('normalizes empty content to llm_empty', async () => {

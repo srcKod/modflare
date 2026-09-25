@@ -31,7 +31,7 @@ export interface LlmProfile {
 
 export type LlmResult =
   | { ok: true; raw: string; finishReason?: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; detail?: string };
 
 /**
  * Run a chat completion. Never throws: failures come back as
@@ -88,7 +88,7 @@ export async function chatCompletion(
     if (!res.ok) {
       const errText = (await res.text().catch(() => '')).slice(0, 300);
       console.error(`LLM returned ${res.status}: ${errText}`);
-      return { ok: false, error: `llm_error:${res.status}` };
+      return { ok: false, error: `llm_error:${res.status}`, detail: errText };
     }
 
     const json = (await res.json().catch(() => null)) as {
