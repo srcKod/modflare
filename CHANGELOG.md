@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Safe (unflagged) moderation verdicts are no longer written to the audit
+  log by default**: an unflagged message still stands in the group's own
+  Telegram history, so an audit copy would duplicate a standing record and
+  retain its text for 30 days with no operational need. The audit log now
+  keeps only flagged rows (the sole record of a deleted message) plus
+  errors, making the audit viewer a problems feed. `MODERATION_LOG_SAFE`
+  (env) or the panel's *Log safe verdicts* toggle (`moderation_log_safe`)
+  re-enables safe-verdict logging for a bounded window — e.g. to harvest
+  clean training pairs via the audit CSV export — then off again.
+
 ## [1.1.0] — 2026-09-20
 
 ### Added

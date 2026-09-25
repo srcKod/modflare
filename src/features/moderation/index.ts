@@ -229,13 +229,27 @@ async function handleModerationUpdate(
         }
       }
     } else {
-      await logger.info('safe', {
-        ...ctx,
-        decision: 'keep',
-        reason: result.reason,
-        message_text: text,
-        llm_response: result.llmResponse ?? result.reason,
-      });
+      // Safe verdicts are NOT logged by default: an unflagged message still
+      // stands in the group's own Telegram history, so an audit copy would
+      // duplicate a standing record and retain its text for 30 days for no
+      // operational need (flagged rows stay logged — they are the sole
+      // record of a deleted message). moderation_log_safe re-enables logging
+      // episodically — e.g. to harvest clean training pairs via the audit
+      // CSV export — then goes back off. The switch check reuses the
+      // overrides already loaded for the master switch (no extra D1 read).
+      const logSafe = settingBool(
+        resolveSetting(env, overrides, 'moderation_log_safe'),
+        false,
+      );
+      if (logSafe) {
+        await logger.info('safe', {
+          ...ctx,
+          decision: 'keep',
+          reason: result.reason,
+          message_text: text,
+          llm_response: result.llmResponse ?? result.reason,
+        });
+      }
     }
   } catch (err) {
     // Fail-open: never let an internal error cause a spurious deletion.

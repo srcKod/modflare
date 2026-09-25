@@ -68,6 +68,20 @@ export const SETTING_DEFS: SettingDef[] = [
     group: 'moderation',
   },
   {
+    key: 'moderation_log_safe',
+    label: 'Log safe verdicts',
+    description:
+      'Off by default: an unflagged message still stands in the group’s own ' +
+      'Telegram history, so an audit copy duplicates a standing record — the ' +
+      'audit log keeps only flagged rows plus errors. Flip on for a bounded ' +
+      'window to harvest clean training pairs via the audit CSV export, then ' +
+      'off again. Shadows the MODERATION_LOG_SAFE env var.',
+    kind: 'boolean',
+    envVar: 'MODERATION_LOG_SAFE',
+    default: 'false',
+    group: 'moderation',
+  },
+  {
     key: 'digest_enabled',
     label: 'News digest master switch',
     description:
