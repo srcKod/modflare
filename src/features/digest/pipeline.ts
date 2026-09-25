@@ -194,7 +194,8 @@ async function digestChat(
   cfg: DigestConfig,
   userPrompt: string,
 ): Promise<
-  { ok: true; raw: string; finishReason?: string } | { ok: false; error: string }
+  | { ok: true; raw: string; finishReason?: string }
+  | { ok: false; error: string; detail?: string }
 > {
   if (!cfg.llm.baseUrl || !cfg.llm.apiKey) {
     return { ok: false, error: 'digest LLM not configured' };
@@ -802,10 +803,23 @@ export async function runDigest(
   // One LLM call: select + summarize + translate + format.
   const llm = await digestChat(cfg, prompt);
   if (!llm.ok) {
+    // Store a failed row so the panel can surface it with the real error
+    // detail and offer a Retry action (re-sends the same LLM prompt).
+    const errMsg = llm.detail ?? llm.error;
+    await db
+      .prepare(
+        `INSERT INTO digest_posts
+           (slot_key, type, run_at, mode, domain, target_chat_id,
+            status, error)
+         VALUES (?, ?, ?, ?, ?, ?, 'failed', ?)`,
+      )
+      .bind(slotKey, type, now, cfg.mode, postDomainFor(cfg, type, slot?.tag),
+        cfg.targetChatId, errMsg)
+      .run();
     await logger.error('news_error', {
       chat_id: Number(cfg.targetChatId),
       reason: llm.error,
-      extra: { slot: slotKey, type },
+      extra: { slot: slotKey, type, detail: llm.detail },
     });
     return;
   }

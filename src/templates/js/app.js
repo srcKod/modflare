@@ -616,12 +616,12 @@ async function loadDigest(){
         '<td class="mono">'+esc(row.slot_key)+'</td>'+
         '<td>'+typeBadge(row.type)+'</td>'+
         '<td>'+domainBadge(row.domain)+'</td>'+
-        '<td><div class="primary">'+esc(row.title||'—')+'</div></td>'+
+        '<td><div class="primary">'+(row.status==='failed'&&row.error?esc(row.error):esc(row.title||'—'))+'</div></td>'+
         '<td><div class="reason">'+renderTgHtml(row.preview||'')+'</div></td>'+
         '<td class="mono">'+esc(fmtT(row.run_at))+'</td>'+
         '<td class="mono">'+esc(row.body_len||0)+' ch</td>'+
         (row.status==='failed'
-          ?'<td><button type="button" class="details-btn" data-dg-retry="'+row.id+'">Retry</button></td>'
+          ?'<td><button type="button" class="details-btn" data-dg-retry="'+row.id+'" title="'+esc(row.error||'Re-send this failed post')+'">Retry</button></td>'
           :'<td><button type="button" class="details-btn" data-dg-edit="'+row.id+'">Edit</button></td>')+
       '</tr>').join('');
       tbody.querySelectorAll('[data-dg-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(Number(b.getAttribute('data-dg-edit')))));

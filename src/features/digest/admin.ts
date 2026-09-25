@@ -114,7 +114,8 @@ async function handleDigestAction(
   if (!env.DB) return json({ error: 'D1 not configured' }, 500);
   const logger = makeLogger(env);
   const row = await env.DB.prepare(
-    `SELECT id, slot_key, type, title, body, status, target_chat_id, body_original
+    `SELECT id, slot_key, type, title, body, status, target_chat_id,
+            body_original, error
      FROM digest_posts WHERE id = ?`,
   )
     .bind(id)
@@ -127,6 +128,7 @@ async function handleDigestAction(
       status: string;
       target_chat_id: string;
       body_original: string | null;
+      error: string | null;
     }>();
   if (!row) return json({ error: 'Not found' }, 404);
   // Status gate per action: save/publish/discard need a draft; retry needs a
@@ -138,6 +140,13 @@ async function handleDigestAction(
   }
   if (action === 'retry' && row.status !== 'failed') {
     return json({ error: `Row is ${row.status}; only failed rows can retry` }, 409);
+  }
+  // Body-less failures (LLM error) have no body to re-send — tell the user
+  // so they don't get an empty post in the channel.
+  if (action === 'retry' && (!row.body || !row.body.trim())) {
+    return json({
+      error: 'Cannot retry: no body was generated (LLM failure). Discard and regenerate.',
+    }, 409);
   }
 
   if (action === 'save') {

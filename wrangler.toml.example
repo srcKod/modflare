@@ -86,6 +86,15 @@ FUNRESPONSE_LANGUAGE = "Arabic"   # or "Spanish", "French", "German"...
 # "Levantine" for Arabic. Omitted -> no dialect hint is sent.
 FUNRESPONSE_DIALECT = "Gulf"      # or "Egyptian", "Levantine", "Standard"...
 
+# Audit-log policy: safe (unflagged) verdicts are NOT written to the audit
+# log by default — an unflagged message still stands in the group's own
+# Telegram history, so a D1 copy would just duplicate a standing record.
+# The audit log keeps only flagged rows (the sole record of a deleted
+# message) plus errors. Set to "true" (or flip the panel's "Log safe
+# verdicts" toggle) for a bounded window to harvest clean training pairs
+# via the admin audit CSV export, then turn it back off.
+# MODERATION_LOG_SAFE = "true"
+
 # Self-clean: auto-delete the bot's own messages (e.g. fun replies) after a
 # TTL. When enabled, every outgoing bot message is tracked in the bot_messages
 # table (migration 0006) and deleted via Telegram once it is older than

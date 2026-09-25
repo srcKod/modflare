@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Safe (unflagged) moderation verdicts are no longer written to the audit
+  log by default**: an unflagged message still stands in the group's own
+  Telegram history, so an audit copy would duplicate a standing record and
+  retain its text for 30 days with no operational need. The audit log now
+  keeps only flagged rows (the sole record of a deleted message) plus
+  errors, making the audit viewer a problems feed. `MODERATION_LOG_SAFE`
+  (env) or the panel's *Log safe verdicts* toggle (`moderation_log_safe`)
+  re-enables safe-verdict logging for a bounded window — e.g. to harvest
+  clean training pairs via the audit CSV export — then off again.
+- **Moderation prompt precision**: the default moderation prompt no longer
+  flags messages that merely contain a link. The model must identify an
+  actively harmful target (phishing page, malware download, scam, deceptive
+  URL) before flagging; a legitimate URL to a well-known site or a GitHub
+  repository is safe. This fixes the over-flagging of ordinary working links
+  (e.g. `github.com`, `google.com`) that were deleted as "Suspicious link".
+
+### Fixed
+
+- **LLM failures now create a visible failed row in the digest panel**: the
+  deep slot (and any digest slot) previously returned silently on an LLM
+  HTTP error (e.g. `llm_error:503`) with no `digest_posts` row, so the panel
+  had nothing to show or retry. A `status='failed'` row is now inserted with
+  the error message and the HTTP response body (capped 300 chars) as detail.
+- **Real LLM error cause surfaced in audit log and panel**: HTTP failures
+  previously discarded the response body to `console.error` only; the audit
+  log `extra` and the panel's failed-row display now carry the detail so the
+  underlying provider error is visible without reading worker logs.
+- **Retry guard for body-less failed rows**: retrying a failed row whose
+  `body` is empty (an LLM generation failure, not a send failure) now
+  returns a clear 409 message instead of sending an empty post to the
+  channel. The user must discard the row and regenerate the slot.
+
 ## [1.1.0] — 2026-09-20
 
 ### Added

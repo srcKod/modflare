@@ -67,6 +67,18 @@ export interface Env {
    */
   ENABLE_MODERATION?: string;
   /**
+   * When 'true', safe (unflagged) moderation verdicts are written to the
+   * audit log with message text and the model's reply. Default 'false':
+   * an unflagged message still stands in the group's own Telegram history,
+   * so an audit copy would duplicate a standing record — the audit log
+   * keeps only flagged rows (the sole record of a deleted message) plus
+   * errors. Flip on for a bounded window to harvest clean training pairs
+   * via the audit CSV export, then off again. Can also be flipped at
+   * runtime from the panel's Settings tab (D1 `settings` row
+   * `moderation_log_safe`, which SHADOWS this var).
+   */
+  MODERATION_LOG_SAFE?: string;
+  /**
    * When true and a message is flagged+deleted, post a kind, harmless funny
    * reply to the group (in the chat's language).
    */

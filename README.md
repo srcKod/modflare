@@ -330,6 +330,7 @@ locally and in the Cloudflare dashboard / `wrangler secret put` in production.
 | `ADMIN_USER_IDS` | Comma-separated admin numeric IDs (immune to username changes) | *none → use API* |
 | `ALLOWED_GROUP_IDS` *(optional)* | Comma-separated numeric chat IDs the bot is allowed to moderate (supergroup IDs are negative like `-1001234567890`). Unset/empty = all groups | *none = all groups* |
 | `ENABLE_MODERATION` | Master switch: when `false`, group messages pass through unmoderated (each skip is logged). Can also be flipped at runtime from the panel's Settings tab | `true` |
+| `MODERATION_LOG_SAFE` | Write safe (unflagged) verdicts to the audit log. Off by default: an unflagged message still stands in the group's own Telegram history, so the audit log keeps only flagged rows plus errors. Flip on for a bounded window to harvest clean training pairs via the audit CSV export, then off again | `false` |
 | `ENABLE_FUNRESPONSE` | Post a kind/harmless funny reply after a flagged deletion | `false` |
 | `FUNRESPONSE_LANGUAGE` | Language for the funny reply | `English` |
 | `FUNRESPONSE_DIALECT` | Optional dialect of the language (e.g. `Egyptian` / `Gulf` / `Levantine` for Arabic) | *none → no dialect hint* |
@@ -390,6 +391,17 @@ on. The switch can also be flipped at runtime from the admin panel's
 Settings tab (a D1 `settings` row that shadows the env var), so you can
 turn moderation off during, say, a maintainer takeover or an incident,
 without redeploying.
+
+**Safe-verdict logging (`MODERATION_LOG_SAFE`)**
+Safe (unflagged) verdicts are **not** written to the audit log by default.
+An unflagged message still stands in the group's own Telegram history, so
+an audit copy would just duplicate a standing record — and retain its text
+for 30 days with no operational need. The audit log therefore keeps only
+flagged rows (the sole record of a deleted message) plus errors, which
+makes the audit viewer a problems feed. When you need clean training
+pairs (negative examples) for the audit CSV export, flip this on (env var
+or the panel's *Log safe verdicts* toggle) for a bounded collection
+window, harvest the CSV, then flip it back off.
 
 **Active window (`START_HOUR` / `END_HOUR` / `TIMEZONE`)**
 The bot only moderates during this window. Cross-midnight ranges are supported
